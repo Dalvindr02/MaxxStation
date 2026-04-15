@@ -6,6 +6,10 @@ buildscript {
         targetSdkVersion = 36
         ndkVersion = "27.1.12297006"
         kotlinVersion = "2.1.20"
+        // Keep Google Play Services aligned with RN libraries that already pull 21.3.0
+        googlePlayServicesVersion = "21.3.0"
+        playServicesVersion = "21.3.0"
+        playServicesLocationVersion = "21.3.0"
     }
     repositories {
         google()
@@ -15,6 +19,7 @@ buildscript {
         classpath("com.android.tools.build:gradle")
         classpath("com.facebook.react:react-native-gradle-plugin")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin")
+        classpath('com.google.gms:google-services:4.4.2')
     }
 }
 
