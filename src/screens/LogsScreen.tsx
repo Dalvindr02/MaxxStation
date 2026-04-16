@@ -17,6 +17,7 @@ import {SafeAreaView} from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
 import Feather from 'react-native-vector-icons/Feather';
 import {useNavigation} from '@react-navigation/native';
+import {ActionButton} from '../components/ui';
 import {TopHeader} from '../components/TopHeader';
 import {useAppTheme} from '../context/ThemeContext';
 import {LogEntry, useLogs} from '../context/LogsContext';
@@ -77,13 +78,6 @@ const getDurationText = (start: string, end: string) => {
 
 const formatDisplayDate = (date: Date) =>
  date.toLocaleDateString([], {month: 'short', day: 'numeric', year: 'numeric'});
-
-const parseDateKey = (value?: string) => {
- if (!value || typeof value !== 'string') return new Date();
- const [y, m, d] = value.split('-').map(Number);
- if (!y || !m || !d) return new Date();
- return new Date(y, m - 1, d);
-};
 
 const formatDateKey = (date: Date) => {
  const yyyy = date.getFullYear();
@@ -563,14 +557,14 @@ export const LogsScreen = () => {
       style={styles.notesInput}
       multiline
      />
-     <TouchableOpacity
+     <ActionButton
+      style={[styles.saveButton, isSavingLog && styles.saveButtonDisabled]}
       onPress={saveManualLog}
       disabled={isSavingLog}
-      style={[styles.saveButton, isSavingLog && {opacity: 0.7}]}>
-      <Text allowFontScaling={false} style={styles.saveButtonText}>
-       {isSavingLog ? 'Saving...' : 'Save Manual Log'}
-      </Text>
-     </TouchableOpacity>
+      icon={isSavingLog ? 'loader' : 'save'}
+      label={isSavingLog ? 'Saving...' : 'Save Manual Log'}
+      subtitle="Save with the same expense gradient style"
+     />
     </View>
 
     <View style={styles.logsHeader}>
@@ -911,16 +905,10 @@ const createStyles = (theme: AppTheme) => {
    fontWeight: '600',
   },
   saveButton: {
-   borderRadius: 12,
-   backgroundColor: theme.colors.primary,
-   alignItems: 'center',
-   justifyContent: 'center',
-   height: 42,
+   marginTop: 4,
   },
-  saveButtonText: {
-   color: '#fff',
-   fontSize: 13,
-   fontWeight: '700',
+  saveButtonDisabled: {
+   opacity: 0.7,
   },
   logsHeader: {
    flexDirection: 'row',

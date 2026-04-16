@@ -8,8 +8,10 @@ import {
  Platform,
  RefreshControl,
  Linking,
+ ActivityIndicator,
 } from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
+import {useNavigation} from '@react-navigation/native';
 import Feather from 'react-native-vector-icons/Feather';
 import DeviceInfo from 'react-native-device-info';
 import NetInfo from '@react-native-community/netinfo';
@@ -23,9 +25,11 @@ import {useDialog} from '../context/DialogContext';
 import {useAppDispatch, useAppSelector} from '../store/hooks';
 import {logout} from '../store/authSlice';
 import {moderateScale} from 'react-native-size-matters';
+import {logoutRequest} from '../services/authService';
 
 export const ProfileScreen = () => {
  const dispatch = useAppDispatch();
+ const navigation = useNavigation();
  const {theme} = useAppTheme();
  const styles = useMemo(() => createStyles(theme), [theme]);
  const {showDialog} = useDialog();
@@ -33,6 +37,7 @@ export const ProfileScreen = () => {
  // Get user data from Redux
  const authUser = useAppSelector(state => state.auth.user);
  const loginData = useAppSelector(state => state.auth.loginData);
+ const token = useAppSelector(state => state.auth.token);
 
  const [battery, setBattery] = useState(0);
  const [network, setNetwork] = useState('Checking...');
@@ -40,6 +45,7 @@ export const ProfileScreen = () => {
  const [_appVersion, setAppVersion] = useState('');
  const [_lastSync, setLastSync] = useState('');
  const [refreshing, setRefreshing] = useState(false);
+ const [isLoggingOut, setIsLoggingOut] = useState(false);
 
  const loadDeviceInfo = async () => {
   try {
@@ -104,8 +110,56 @@ export const ProfileScreen = () => {
   return theme.colors.error;
  };
 
- const handleSignOut = () => {
-  dispatch(logout());
+ const handleSignOut = async () => {
+  if (!token) {
+   showDialog({
+    title: 'Error',
+    message: 'No auth token found. Unable to logout.',
+    variant: 'error',
+    primaryAction: {label: 'Okay'},
+   });
+   return;
+  }
+
+  setIsLoggingOut(true);
+
+  try {
+   const result = await logoutRequest(token);
+
+   if (result.success) {
+    showDialog({
+     title: 'Logged Out',
+     message: result.message || 'You have been logged out successfully.',
+     variant: 'success',
+     primaryAction: {
+      label: 'Okay',
+      onPress: () => {
+       dispatch(logout());
+      },
+     },
+    });
+   } else {
+    showDialog({
+     title: 'Logout Failed',
+     message: result.message || 'Unable to logout. Please try again.',
+     variant: 'error',
+     primaryAction: {label: 'Try Again'},
+    });
+   }
+  } catch (error) {
+   console.error('Error logging out:', error);
+   showDialog({
+    title: 'Error',
+    message:
+     error instanceof Error
+      ? error.message
+      : 'Failed to logout. Please try again.',
+    variant: 'error',
+    primaryAction: {label: 'Try Again'},
+   });
+  } finally {
+   setIsLoggingOut(false);
+  }
  };
 
  // Helper to extract user info from Redux
@@ -194,6 +248,102 @@ export const ProfileScreen = () => {
   );
  };
 
+ const getDepartment = (): string => {
+  if (!loginData) return 'Operations';
+
+  return (
+   (typeof loginData.department === 'string' && loginData.department) ||
+   (typeof loginData.department_name === 'string' &&
+    loginData.department_name) ||
+   (typeof loginData.dept === 'string' && loginData.dept) ||
+   (typeof loginData.designationName === 'string' &&
+    loginData.designationName) ||
+   'Operations'
+  );
+ };
+
+ const getPhone = (): string => {
+  if (!loginData) return '+1 (555) 123-4567';
+
+  return (
+   (typeof loginData.phone === 'string' && loginData.phone) ||
+   (typeof loginData.phone_number === 'string' && loginData.phone_number) ||
+   (typeof loginData.contact_number === 'string' && loginData.contact_number) ||
+   (typeof loginData.mobile === 'string' && loginData.mobile) ||
+   (typeof authUser?.phone === 'string' && authUser.phone) ||
+   '+1 (555) 123-4567'
+  );
+ };
+
+ const getWorkLocation = (): string => {
+  if (!loginData) return 'San Francisco, CA';
+
+  return (
+   (typeof loginData.work_location === 'string' && loginData.work_location) ||
+   (typeof loginData.location === 'string' && loginData.location) ||
+   (typeof loginData.office_location === 'string' &&
+    loginData.office_location) ||
+   (typeof loginData.city === 'string' && loginData.city) ||
+   (typeof loginData.address === 'string' && loginData.address) ||
+   'San Francisco, CA'
+  );
+ };
+
+ const getAttendanceData = (): {present: string; percentage: string} => {
+  if (!loginData) return {present: '22/23', percentage: '95.6%'};
+
+  const present =
+   (typeof loginData.attendance === 'string' && loginData.attendance) ||
+   (typeof loginData.present_days === 'string' && loginData.present_days) ||
+   (typeof loginData.attendance_count === 'string' &&
+    loginData.attendance_count) ||
+   '22/23';
+
+  const percentage =
+   (typeof loginData.attendance_percentage === 'string' &&
+    loginData.attendance_percentage) ||
+   (typeof loginData.present_percentage === 'string' &&
+    loginData.present_percentage) ||
+   '95.6%';
+
+  return {present, percentage};
+ };
+
+ const getHoursLogged = (): {hours: string; overtime: string} => {
+  if (!loginData) return {hours: '176.5h', overtime: '+8.5h'};
+
+  const hours =
+   (typeof loginData.hours_logged === 'string' && loginData.hours_logged) ||
+   (typeof loginData.total_hours === 'string' && loginData.total_hours) ||
+   (typeof loginData.working_hours === 'string' && loginData.working_hours) ||
+   '176.5h';
+
+  const overtime =
+   (typeof loginData.overtime_hours === 'string' && loginData.overtime_hours) ||
+   (typeof loginData.extra_hours === 'string' && loginData.extra_hours) ||
+   '+8.5h';
+
+  return {hours, overtime};
+ };
+
+ const getLogsCreated = (): {count: string; status: string} => {
+  if (!loginData) return {count: '48', status: 'All verified'};
+
+  const count =
+   (typeof loginData.logs_count === 'string' && loginData.logs_count) ||
+   (typeof loginData.total_logs === 'string' && loginData.total_logs) ||
+   (typeof loginData.log_entries === 'string' && loginData.log_entries) ||
+   '48';
+
+  const status =
+   (typeof loginData.logs_status === 'string' && loginData.logs_status) ||
+   (typeof loginData.verification_status === 'string' &&
+    loginData.verification_status) ||
+   'All verified';
+
+  return {count, status};
+ };
+
  const renderPolicy = (icon: string, title: string, meta: string) => (
   <View style={styles.policyRow}>
    <View style={styles.policyIcon}>
@@ -260,7 +410,7 @@ export const ProfileScreen = () => {
         Department
        </Text>
        <Text allowFontScaling={false} style={styles.statusValue}>
-        Operations
+        {getDepartment()}
        </Text>
       </View>
      </View>
@@ -279,10 +429,10 @@ export const ProfileScreen = () => {
         Attendance
        </Text>
        <Text allowFontScaling={false} style={styles.statValue}>
-        22/23
+        {getAttendanceData().present}
        </Text>
        <Text allowFontScaling={false} style={styles.statMeta}>
-        95.6% present
+        {getAttendanceData().percentage} present
        </Text>
       </View>
 
@@ -294,10 +444,10 @@ export const ProfileScreen = () => {
         Hours Logged
        </Text>
        <Text allowFontScaling={false} style={styles.statValue}>
-        176.5h
+        {getHoursLogged().hours}
        </Text>
        <Text allowFontScaling={false} style={styles.statMeta}>
-        +8.5h overtime
+        {getHoursLogged().overtime} overtime
        </Text>
       </View>
 
@@ -309,10 +459,10 @@ export const ProfileScreen = () => {
         Logs Created
        </Text>
        <Text allowFontScaling={false} style={styles.statValue}>
-        48
+        {getLogsCreated().count}
        </Text>
        <Text allowFontScaling={false} style={styles.statMeta}>
-        All verified
+        {getLogsCreated().status}
        </Text>
       </View>
      </View>
@@ -370,7 +520,7 @@ export const ProfileScreen = () => {
          Phone
         </Text>
         <Text allowFontScaling={false} style={styles.accountValue}>
-         +1 (555) 123-4567
+         {getPhone()}
         </Text>
        </View>
       </View>
@@ -384,7 +534,7 @@ export const ProfileScreen = () => {
          Work Location
         </Text>
         <Text allowFontScaling={false} style={styles.accountValue}>
-         San Francisco, CA
+         {getWorkLocation()}
         </Text>
        </View>
       </View>
@@ -460,7 +610,40 @@ export const ProfileScreen = () => {
 
     <TouchableOpacity
      activeOpacity={0.9}
+     style={styles.reportsButton}
+     onPress={() => navigation.navigate('ReportList' as never)}>
+     <LinearGradient
+      colors={theme.gradients.button}
+      start={{x: 0, y: 0}}
+      end={{x: 1, y: 1}}
+      style={styles.reportsGradient}>
+      <View style={styles.reportsInner}>
+       <View style={styles.reportsIconWrap}>
+        <Feather name="list" size={18} color="#FFFFFF" />
+       </View>
+       <View style={styles.reportsContent}>
+        <Text allowFontScaling={false} style={styles.reportsText}>
+         View Report History
+        </Text>
+        <Text allowFontScaling={false} style={styles.reportsMeta}>
+         All your submitted reports
+        </Text>
+       </View>
+       <View style={styles.reportsArrow}>
+        <Feather
+         name="arrow-up-right"
+         size={16}
+         color="#FFFFFF"
+        />
+       </View>
+      </View>
+     </LinearGradient>
+    </TouchableOpacity>
+
+    <TouchableOpacity
+     activeOpacity={0.9}
      style={styles.signOutButton}
+     disabled={isLoggingOut}
      onPress={handleSignOut}>
      <LinearGradient
       colors={
@@ -472,14 +655,18 @@ export const ProfileScreen = () => {
       end={{x: 1, y: 1}}
       style={styles.signOutGradient}>
       <View style={styles.signOutIconWrap}>
-       <Feather name="log-out" size={18} color={theme.colors.primary} />
+       {isLoggingOut ? (
+        <ActivityIndicator size="small" color={theme.colors.primary} />
+       ) : (
+        <Feather name="log-out" size={18} color={theme.colors.primary} />
+       )}
       </View>
       <View style={styles.signOutContent}>
        <Text allowFontScaling={false} style={styles.signOutText}>
-        Sign Out from Workforce
+        {isLoggingOut ? 'Signing Out...' : 'Sign Out from Workforce'}
        </Text>
        <Text allowFontScaling={false} style={styles.signOutMeta}>
-        End this session on this device
+        {isLoggingOut ? 'Please wait...' : 'End this session on this device'}
        </Text>
       </View>
       <View style={styles.signOutArrow}>
@@ -686,6 +873,67 @@ const createStyles = (theme: AppTheme) => {
    fontWeight: '700',
    marginTop: 2,
    textAlign: 'center',
+  },
+  reportsButton: {
+   marginTop: 16,
+   marginBottom: 8,
+   borderRadius: 18,
+   overflow: 'hidden',
+   shadowColor: theme.colors.glow,
+   shadowOffset: {width: 0, height: 10},
+   shadowOpacity: theme.isDark ? 0.18 : 0.1,
+   shadowRadius: 16,
+   elevation: 6,
+  },
+  reportsGradient: {
+   padding: 1,
+   borderRadius: 18,
+  },
+  reportsInner: {
+   flexDirection: 'row',
+   height: moderateScale(55),
+   justifyContent: 'space-between',
+   gap: 12,
+   alignItems: 'center',
+   borderRadius: 17,
+   backgroundColor: 'rgba(25,12,45,0.96)',
+   borderWidth: 1,
+   borderColor: 'rgba(255,255,255,0.06)',
+  },
+  reportsIconWrap: {
+   width: 42,
+   height: 42,
+   margin: 12,
+   borderRadius: 14,
+   alignItems: 'center',
+   justifyContent: 'center',
+   backgroundColor: 'rgba(255,255,255,0.08)',
+   borderWidth: 1,
+   borderColor: 'rgba(255,255,255,0.12)',
+  },
+  reportsContent: {
+   flex: 1,
+  },
+  reportsText: {
+   color: '#FFFFFF',
+   fontSize: 14,
+   fontWeight: '800',
+  },
+  reportsMeta: {
+   marginTop: 2,
+   color: 'rgba(255,255,255,0.82)',
+   fontSize: 11,
+  },
+  reportsArrow: {
+   width: 36,
+   height: 36,
+   marginRight: 12,
+   borderRadius: 12,
+   alignItems: 'center',
+   justifyContent: 'center',
+   backgroundColor: 'rgba(255,255,255,0.08)',
+   borderWidth: 1,
+   borderColor: 'rgba(255,255,255,0.12)',
   },
   signOutButton: {
    marginTop: 4,

@@ -24,6 +24,8 @@ import {ProfileScreen} from '../screens/ProfileScreen';
 import {ReportScreen} from '../screens/ReportScreen';
 import LogsHistoryScreen from '../screens/LogHistoryScreen';
 import {LogDetailScreen} from '../screens/LogDetailScreen';
+import {ReportListScreen} from '../screens/ReportListScreen';
+import {ReportDetailScreen} from '../screens/ReportDetailScreen';
 import {useAppSelector} from '../store/hooks';
 import {RootStackParamList} from './types';
 
@@ -150,6 +152,22 @@ export const AppNavigator = () => {
       <Stack.Screen
        name="AttendanceHistory"
        component={AttendanceHistoryScreen}
+       options={{
+        presentation: 'modal',
+        animation: 'slide_from_right',
+       }}
+      />
+      <Stack.Screen
+       name="ReportList"
+       component={ReportListScreen}
+       options={{
+        presentation: 'modal',
+        animation: 'slide_from_right',
+       }}
+      />
+      <Stack.Screen
+       name="ReportDetail"
+       component={ReportDetailScreen}
        options={{
         presentation: 'modal',
         animation: 'slide_from_right',

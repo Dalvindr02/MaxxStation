@@ -1,14 +1,13 @@
 {
   "project_info": {
-    "project_number": "480604440721",
-    "firebase_url": "https://maxxstation-d8359-default-rtdb.firebaseio.com",
-    "project_id": "maxxstation-d8359",
-    "storage_bucket": "maxxstation-d8359.firebasestorage.app"
+    "project_number": "332126108345",
+    "project_id": "maxxstation-bc2bf",
+    "storage_bucket": "maxxstation-bc2bf.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:480604440721:android:e0d7a015acb0a8da861730",
+        "mobilesdk_app_id": "1:332126108345:android:c890cfd5f2b894bb6a3968",
         "android_client_info": {
           "package_name": "com.maxxstation"
         }
@@ -16,7 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyCrk2ih3K08BVC2Mu0NACRQT4I55WjnyRE"
+          "current_key": "AIzaSyAItULvNMg2PWykvVIBSyeUlixpcu_8oPw"
         }
       ],
       "services": {
