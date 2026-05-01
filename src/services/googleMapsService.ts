@@ -1,17 +1,12 @@
 import axios from 'axios';
 import Geocoder from 'react-native-geocoding';
+import Config from 'react-native-config';
 import {LatLng} from '../constants/workLocation';
 
-// Add your Google Maps Web API key here for manual travel logging.
-// Enable these APIs on the same key in Google Cloud Console:
-// 1. Places API - powers from/to autocomplete suggestions while the user types.
-// 2. Geocoding API - converts a selected or typed place into latitude/longitude.
-// 3. Directions API - returns route alternatives, distance, duration, and polyline.
-// The MapView itself also needs native Maps SDK setup in Android/iOS config.
-// The Android SDK key in AndroidManifest.xml can be used here if it is also
-// enabled for web APIs and not restricted to Android SDK usage only.
+// Load the Google Maps Web API key from the native environment.
+// This keeps the key out of source control and lets the app read it from .env.
 export const GOOGLE_MAPS_WEB_API_KEY =
- 'AIzaSyB3V-ZHCkBBVXcH-iDC2f2VXH27Jy5Zz28';
+ Config.GOOGLE_MAPS_WEB_API_KEY?.trim() ?? '';
 
 Geocoder.init(GOOGLE_MAPS_WEB_API_KEY);
 
