@@ -1,4 +1,4 @@
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
  Image,
  Platform,
@@ -120,6 +120,14 @@ export const ExpensesScreen = () => {
  );
  const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
  const authToken = useAppSelector(state => state.auth.token);
+ const isMounted = useRef(true);
+
+ useEffect(() => {
+  isMounted.current = true;
+  return () => {
+   isMounted.current = false;
+  };
+ }, []);
 
  useEffect(() => {
   const loadCategories = async () => {
@@ -134,19 +142,21 @@ export const ExpensesScreen = () => {
      ? res
      : [];
     if (list.length > 0) {
-     const mapped = list.map((item: any) => ({
+     const mappedResults = list.map((item: any) => ({
       key: String(item.id || item.category_id || Math.random()),
       value: String(item.name || item.category_name || item.title || 'Unknown'),
       icon: 'tag',
      }));
-     setCategoryOptions(mapped);
-     if (mapped[0]) setCategory(mapped[0].key);
+     if (!isMounted.current) return;
+     setCategoryOptions(mappedResults);
+     if (mappedResults[0]) setCategory(mappedResults[0].key);
     }
    } catch (err) {
+    if (!isMounted.current) return;
     setCategoryOptions(FALLBACK_CATEGORIES);
     setCategory(FALLBACK_CATEGORIES[0].key);
    } finally {
-    setIsLoadingCategories(false);
+    if (isMounted.current) setIsLoadingCategories(false);
    }
   };
 
@@ -154,6 +164,7 @@ export const ExpensesScreen = () => {
    try {
     setIsLoadingExpenses(true);
     const res = await fetchExpenseList(authToken, page);
+    if (!isMounted.current) return;
     if (res?.data?.data) {
      if (page === 1) {
       setExpenses(res.data.data);
@@ -166,7 +177,7 @@ export const ExpensesScreen = () => {
    } catch (err) {
     console.log('Failed to fetch expenses', err);
    } finally {
-    setIsLoadingExpenses(false);
+    if (isMounted.current) setIsLoadingExpenses(false);
    }
   };
 
@@ -296,19 +307,6 @@ export const ExpensesScreen = () => {
   try {
    setIsSubmitting(true);
 
-   const selectedCategoryName =
-    categoryOptions.find(c => c.key === category)?.value || category;
-
-   const payload: ExpenseEntry = {
-    id: Date.now().toString(),
-    amount: normalizedAmount,
-    category: selectedCategoryName,
-    date: formatDate(expenseDate),
-    time: formatTime(expenseTime),
-    notes: notes.trim(),
-    hasReceipt: Boolean(receiptUri),
-   };
-
    if (editingExpenseId) {
     await updateExpenseRequest(authToken, editingExpenseId, formData);
    } else {
@@ -317,6 +315,7 @@ export const ExpensesScreen = () => {
 
    // Refetch page 1 to ensure UI list is in sync with backend IDs
    const res = await fetchExpenseList(authToken, 1);
+   if (!isMounted.current) return;
    if (res?.data?.data) {
     setExpenses(res.data.data);
     setHasMorePages(res.data.current_page < res.data.last_page);
@@ -333,6 +332,7 @@ export const ExpensesScreen = () => {
    });
    resetExpenseForm();
   } catch (error: any) {
+   if (!isMounted.current) return;
    showDialog({
     title: 'Failed to submit',
     message: error.message || 'An error occurred while saving the expense.',
@@ -340,7 +340,7 @@ export const ExpensesScreen = () => {
     primaryAction: {label: 'Okay'},
    });
   } finally {
-   setIsSubmitting(false);
+   if (isMounted.current) setIsSubmitting(false);
   }
  };
 
@@ -386,6 +386,7 @@ export const ExpensesScreen = () => {
      try {
       setDeletingExpenseId(expenseId);
       await deleteExpenseRequest(authToken, expenseId);
+      if (!isMounted.current) return;
       setExpenses(prev =>
        prev.filter(item => String(item.id ?? '').trim() !== expenseId),
       );
@@ -396,6 +397,7 @@ export const ExpensesScreen = () => {
        primaryAction: {label: 'Okay'},
       });
      } catch (error: any) {
+      if (!isMounted.current) return;
       showDialog({
        title: 'Delete failed',
        message: error.message || 'Unable to delete expense.',
@@ -403,7 +405,7 @@ export const ExpensesScreen = () => {
        primaryAction: {label: 'Okay'},
       });
      } finally {
-      setDeletingExpenseId(null);
+      if (isMounted.current) setDeletingExpenseId(null);
      }
     },
    },
@@ -517,7 +519,6 @@ export const ExpensesScreen = () => {
        placeholder={isLoadingCategories ? 'Loading...' : 'Select category'}
        boxStyles={styles.selectBox}
        inputStyles={styles.selectText}
-       dropdownStyles={styles.selectDropdown}
        dropdownTextStyles={styles.selectDropdownText}
        search={false}
       />

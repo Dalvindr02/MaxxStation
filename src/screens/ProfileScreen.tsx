@@ -131,10 +131,17 @@ export const ProfileScreen = () => {
      title: 'Logged Out',
      message: result.message || 'You have been logged out successfully.',
      variant: 'success',
+     // Prevent accidental backdrop tap during the navigation transition
+     dismissOnBackdrop: false,
      primaryAction: {
       label: 'Okay',
       onPress: () => {
-       dispatch(logout());
+       // Delay dispatch so the Modal fully closes before navigation
+       // switches to LoginScreen. Without this, iOS crashes because
+       // the navigation tree is torn down while the Modal is still mounted.
+       setTimeout(() => {
+        dispatch(logout());
+       }, 400);
       },
      },
     });
@@ -148,14 +155,22 @@ export const ProfileScreen = () => {
    }
   } catch (error) {
    console.error('Error logging out:', error);
+   // Even if the API call fails, let the user force-logout locally
    showDialog({
-    title: 'Error',
+    title: 'Network Error',
     message:
-     error instanceof Error
-      ? error.message
-      : 'Failed to logout. Please try again.',
-    variant: 'error',
-    primaryAction: {label: 'Try Again'},
+     'Could not reach the server. You can force-logout from this device.',
+    variant: 'warning',
+    dismissOnBackdrop: false,
+    primaryAction: {
+     label: 'Force Logout',
+     onPress: () => {
+      setTimeout(() => {
+       dispatch(logout());
+      }, 400);
+     },
+    },
+    secondaryAction: {label: 'Cancel'},
    });
   } finally {
    setIsLoggingOut(false);
@@ -630,11 +645,7 @@ export const ProfileScreen = () => {
         </Text>
        </View>
        <View style={styles.reportsArrow}>
-        <Feather
-         name="arrow-up-right"
-         size={16}
-         color="#FFFFFF"
-        />
+        <Feather name="arrow-up-right" size={16} color="#FFFFFF" />
        </View>
       </View>
      </LinearGradient>

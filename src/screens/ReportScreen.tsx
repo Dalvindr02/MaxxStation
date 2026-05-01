@@ -40,6 +40,14 @@ export const ReportScreen = () => {
  const [billable, setBillable] = useState(true);
  const [isLoading, setIsLoading] = useState(false);
  const [isSubmitting, setIsSubmitting] = useState(false);
+ const isMounted = React.useRef(true);
+
+ useEffect(() => {
+  isMounted.current = true;
+  return () => {
+   isMounted.current = false;
+  };
+ }, []);
 
  const [reportSummary, setReportSummary] = useState({
   totalTrackedHours: '0h 00m',
@@ -85,6 +93,7 @@ export const ReportScreen = () => {
     const result = await fetchDailySummary(getUserId(), getTodayDate(), token);
 
     if (result.success && result.data) {
+     if (!isMounted.current) return;
      // Extract data from API response
      const data = result.data as Record<string, unknown>;
      setReportSummary(prev => ({
@@ -114,6 +123,7 @@ export const ReportScreen = () => {
      }));
      console.log('Daily summary loaded:', result.data);
     } else {
+     if (!isMounted.current) return;
      showDialog({
       title: 'Summary Load Failed',
       message: result.message || 'Unable to load daily summary',
@@ -122,6 +132,7 @@ export const ReportScreen = () => {
      });
     }
    } catch (error) {
+    if (!isMounted.current) return;
     console.error('Error loading daily summary:', error);
     showDialog({
      title: 'Error',
@@ -131,7 +142,7 @@ export const ReportScreen = () => {
      primaryAction: {label: 'Okay'},
     });
    } finally {
-    setIsLoading(false);
+    if (isMounted.current) setIsLoading(false);
    }
   };
 
@@ -160,6 +171,7 @@ export const ReportScreen = () => {
    );
 
    if (result.success) {
+    if (!isMounted.current) return;
     showDialog({
      title: 'Success',
      message: result.message || 'Report submitted successfully!',
@@ -170,6 +182,7 @@ export const ReportScreen = () => {
     setNotes('');
     setBillable(true);
    } else {
+    if (!isMounted.current) return;
     showDialog({
      title: 'Submission Failed',
      message: result.message || 'Unable to submit report',
@@ -178,6 +191,7 @@ export const ReportScreen = () => {
     });
    }
   } catch (error) {
+   if (!isMounted.current) return;
    console.error('Error submitting report:', error);
    showDialog({
     title: 'Error',
@@ -186,7 +200,7 @@ export const ReportScreen = () => {
     primaryAction: {label: 'Okay'},
    });
   } finally {
-   setIsSubmitting(false);
+   if (isMounted.current) setIsSubmitting(false);
   }
  };
  const summaryTiles = useMemo(

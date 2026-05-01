@@ -177,6 +177,14 @@ export const LogsScreen = () => {
  const [notes, setNotes] = React.useState('Manual log entry');
  const [billable, setBillable] = React.useState(true);
  const [isSavingLog, setIsSavingLog] = React.useState(false);
+ const isMounted = React.useRef(true);
+
+ useEffect(() => {
+  isMounted.current = true;
+  return () => {
+   isMounted.current = false;
+  };
+ }, []);
 
  useEffect(() => {
   dispatch(fetchLogs());
@@ -297,6 +305,8 @@ export const LogsScreen = () => {
    setIsSavingLog(true);
    const result = await createManualLogRequest(payload, authToken);
    await dispatch(fetchLogs()).unwrap();
+   // Guard: screen may have been unmounted while request was in-flight
+   if (!isMounted.current) return;
    showDialog({
     title: 'Log created',
     message: result.message || 'Manual log created successfully.',
@@ -305,6 +315,7 @@ export const LogsScreen = () => {
    });
    setNotes('Manual log entry');
   } catch (error) {
+   if (!isMounted.current) return;
    showDialog({
     title: 'Save failed',
     message:
@@ -313,7 +324,7 @@ export const LogsScreen = () => {
     primaryAction: {label: 'OK'},
    });
   } finally {
-   setIsSavingLog(false);
+   if (isMounted.current) setIsSavingLog(false);
   }
  };
 
@@ -337,6 +348,8 @@ export const LogsScreen = () => {
       await deleteManualLogRequest(log.id, authToken);
       await dispatch(fetchLogs()).unwrap();
      } catch (deleteError) {
+      // Guard: screen may have unmounted while delete was in-flight
+      if (!isMounted.current) return;
       const message =
        deleteError instanceof Error
         ? deleteError.message

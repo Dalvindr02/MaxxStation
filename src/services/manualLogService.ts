@@ -15,6 +15,14 @@ export type CreateManualLogPayload = {
   billable: string;
   meeting_agenda: string;
   project_id: number;
+  from_location?: string;
+  to_location?: string;
+  route_distance_meters?: number;
+  route_duration_seconds?: number;
+  route_polyline?: string;
+  route_summary?: string;
+  audit_status?: string;
+  audit_flags?: string;
 };
 
 export type CreateManualLogResult = {
@@ -370,12 +378,12 @@ export const createManualLogRequest = async (
     if (axios.isAxiosError(error)) {
       console.log('Create manual log API error response:', error.response?.data);
 
-      const payload = error.response?.data;
+      const errorPayload = error.response?.data;
       const fallback = error.response?.status
         ? `Manual log request failed with status ${error.response.status}`
         : 'Unable to create manual log. Please try again.';
 
-      throw new Error(getErrorMessage(payload, fallback));
+      throw new Error(getErrorMessage(errorPayload, fallback));
     }
 
     if (error instanceof Error) {

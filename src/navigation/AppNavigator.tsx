@@ -14,6 +14,7 @@ import {useAppTheme} from '../context/ThemeContext';
 import {CustomTabBar} from '../components/CustomTabBar';
 import AttendanceScreen from '../screens/AttendanceScreen';
 import AttendanceHistoryScreen from '../screens/AttendanceHistoryScreen';
+import AttendanceTravelScreen from '../screens/AttendanceTravelScreen';
 import {ExpensesScreen, ExpenseEntry} from '../screens/ExpensesScreen';
 import {ExpenseListScreen} from '../screens/ExpenseListScreen';
 import ExpenseDetailScreen from '../screens/ExpenseDetailScreen';
@@ -140,9 +141,11 @@ export const AppNavigator = () => {
   <NavigationContainer theme={navigationTheme}>
    <Stack.Navigator screenOptions={{headerShown: false}}>
     {!isAuthenticated ? (
-     <Stack.Screen name="Auth" component={LoginScreen} />
+     <Stack.Group navigationKey="auth-flow">
+      <Stack.Screen name="Auth" component={LoginScreen} />
+     </Stack.Group>
     ) : (
-     <>
+     <Stack.Group navigationKey="app-flow">
       <Stack.Screen name="Main" component={TabNavigator} />
       <Stack.Screen
        name="Report"
@@ -152,6 +155,14 @@ export const AppNavigator = () => {
       <Stack.Screen
        name="AttendanceHistory"
        component={AttendanceHistoryScreen}
+       options={{
+        presentation: 'modal',
+        animation: 'slide_from_right',
+       }}
+      />
+      <Stack.Screen
+       name="AttendanceTravel"
+       component={AttendanceTravelScreen}
        options={{
         presentation: 'modal',
         animation: 'slide_from_right',
@@ -173,7 +184,7 @@ export const AppNavigator = () => {
         animation: 'slide_from_right',
        }}
       />
-     </>
+     </Stack.Group>
     )}
    </Stack.Navigator>
   </NavigationContainer>

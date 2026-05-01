@@ -4,17 +4,39 @@
 
 import 'react-native-gesture-handler';
 import 'react-native-reanimated';
-import { AppRegistry } from 'react-native';
+import {AppRegistry} from 'react-native';
 import messaging from '@react-native-firebase/messaging';
 import notifee from '@notifee/react-native';
 import App from './App';
-import { name as appName } from './app.json';
+import {name as appName} from './app.json';
 import {
-  handleIncomingRemoteMessage,
-  handleNotifeeBackgroundEvent,
+ handleIncomingRemoteMessage,
+ handleNotifeeBackgroundEvent,
+ restoreShiftNotificationSchedulesFromStorage,
 } from './src/services/notificationService';
 
-messaging().setBackgroundMessageHandler(handleIncomingRemoteMessage);
+messaging().setBackgroundMessageHandler(async remoteMessage => {
+ console.log('setBackgroundMessageHandler invoked', remoteMessage?.messageId);
+ return handleIncomingRemoteMessage(remoteMessage);
+});
 notifee.onBackgroundEvent(handleNotifeeBackgroundEvent);
+AppRegistry.registerHeadlessTask(
+ 'RNFirebaseBackgroundMessage',
+ () => async remoteMessage => {
+  console.log(
+   'RNFirebaseBackgroundMessage headless task invoked',
+   remoteMessage?.messageId,
+  );
+  return handleIncomingRemoteMessage(remoteMessage);
+ },
+);
+
+AppRegistry.registerHeadlessTask(
+ 'ShiftNotificationResyncTask',
+ () => async taskData => {
+  console.log('ShiftNotificationResyncTask invoked', taskData);
+  return restoreShiftNotificationSchedulesFromStorage();
+ },
+);
 
 AppRegistry.registerComponent(appName, () => App);

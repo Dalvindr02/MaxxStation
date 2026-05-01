@@ -23,6 +23,15 @@ const DialogContext = createContext<DialogContextValue | null>(null);
 export const DialogProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
+  const isMounted = React.useRef(true);
+
+  React.useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
+
   const [dialogConfig, setDialogConfig] = useState<DialogConfig & { visible: boolean }>(
     {
       visible: false,
@@ -36,10 +45,12 @@ export const DialogProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 
   const hideDialog = useCallback(() => {
+    if (!isMounted.current) return;
     setDialogConfig(prev => ({ ...prev, visible: false }));
   }, []);
 
   const showDialog = useCallback((config: DialogConfig) => {
+    if (!isMounted.current) return;
     setDialogConfig({
       visible: true,
       ...config,

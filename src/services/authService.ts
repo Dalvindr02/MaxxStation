@@ -229,10 +229,11 @@ export const logoutRequest = async (
  try {
   const response = await axios.post(
    buildApiUrl(API_ENDPOINTS.logout),
-   {},
+   {token},
    {
     headers: {
      Authorization: `Bearer ${token}`,
+     Accept: 'application/json',
      'Content-Type': 'application/json',
     },
    },

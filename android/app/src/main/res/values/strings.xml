@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">MaxxStation</string>
+    <string name="app_name">MaxxStations</string>
     <string name="google_maps_api_key">AIzaSyD_EXAMPLE_ANDROID_MAPS_KEY_REPLACE_ME</string>
     <string name="appCenterCrashes_whenToSendCrashes" moduleConfig="true" translatable="false">DO_NOT_ASK_JAVASCRIPT</string>
     <string name="appCenterAnalytics_whenToEnableAnalytics" moduleConfig="true" translatable="false">ALWAYS_SEND</string>
