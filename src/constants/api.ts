@@ -1,4 +1,4 @@
-export const API_BASE_URL = 'https://apimaxxstation.maxxmann.info/api/';
+export const API_BASE_URL = 'https://apimaxxstation.maxxmann.info/api/android/';
 export const PROJECTS_API_AUTH_TOKEN = '';
 
 export const API_ENDPOINTS = {
@@ -6,11 +6,13 @@ export const API_ENDPOINTS = {
  logout: 'logout',
  getProjects: 'get-project',
  createManualLog: 'create-manual-log',
+ travelLogCreate: 'travel-log-create',
  getManualLogList: 'all-log-list',
  deleteManualLog: 'delete-manual-log',
  dailySummary: 'daily-summary',
  reportsList: 'reports-list',
  reportDetail: 'report-detail',
+ travelLogDetail: 'travel-logs-detail',
 } as const;
 
 export const buildApiUrl = (endpoint: string) => {

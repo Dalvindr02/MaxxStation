@@ -8,6 +8,15 @@ import React, {
 
 export type LogStatus = 'approved' | 'rejected' | 'review';
 
+export type TravelCoordinate = {
+  latitude: number;
+  longitude: number;
+};
+
+export type TravelStop = TravelCoordinate & {
+  label?: string;
+};
+
 export type LogEntry = {
   id: string;
   date: string; // YYYY-MM-DD
@@ -21,6 +30,19 @@ export type LogEntry = {
   notes: string;
   billable: boolean;
   status: LogStatus;
+  fromLocation?: string;
+  toLocation?: string;
+  fromCoords?: TravelCoordinate | null;
+  toCoords?: TravelCoordinate | null;
+  routePoints?: TravelCoordinate[];
+  stops?: TravelStop[];
+  routeDistanceMeters?: number | null;
+  routeDurationSeconds?: number | null;
+  routeSummary?: string;
+  googleDistance?: string;
+  googleDuration?: string;
+  auditStatus?: string;
+  auditFlags?: string;
 };
 
 type LogsContextValue = {

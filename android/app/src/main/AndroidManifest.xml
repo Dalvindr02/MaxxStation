@@ -23,7 +23,7 @@
       android:supportsRtl="true">
       <meta-data
         android:name="com.google.android.geo.API_KEY"
-        android:value="AIzaSyB3V-ZHCkBBVXcH-iDC2f2VXH27Jy5Zz28" />
+        android:value="AIzaSyBYcgSlW_VgS7ol7rbDjFtIkt-QucujDcY" />
       <meta-data
         android:name="com.google.firebase.messaging.default_notification_channel_id"
         android:value="maxxstation-alerts"

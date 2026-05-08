@@ -4,6 +4,7 @@ import { persistReducer, persistStore } from 'redux-persist';
 import authReducer from './authSlice';
 import projectsReducer from './projectsSlice';
 import logReducer from './logSlice';
+import travelLogReducer from './travelLogSlice';
 const authPersistConfig = {
   key: 'auth',
   storage: AsyncStorage,
@@ -13,6 +14,7 @@ const rootReducer = combineReducers({
   auth: persistReducer(authPersistConfig, authReducer),
   projects: projectsReducer,
   logs: logReducer,
+  travelLogs: travelLogReducer,
 });
 
 export const store = configureStore({

@@ -44,6 +44,8 @@ import {
  syncAttendanceNotifications,
 } from '../services/notificationService';
 import {LocationStatus} from '../types/attendance';
+import {ManualLogModal} from '../components/ManualLogModal';
+import {useAppSelector} from '../store/hooks';
 const formatNow = (baseDate?: Date) => {
  const now = baseDate ?? new Date();
  const time = now.toLocaleTimeString([], {
@@ -147,7 +149,15 @@ export default function AttendanceScreen() {
  const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
  const [locationError, setLocationError] = useState<string | null>(null);
  const [isRefreshingLocation, setIsRefreshingLocation] = useState(false);
+ const [isManualLogModalVisible, setIsManualLogModalVisible] = useState(false);
  const isMounted = useRef(true);
+
+ // Redux selectors
+ const authToken = useAppSelector(state => state.auth.token);
+ const selectedProjectId = useAppSelector(
+  state => state.projects.selectedProjectId,
+ );
+ const projects = useAppSelector(state => state.projects.items);
 
  useEffect(() => {
   isMounted.current = true;
@@ -174,6 +184,22 @@ export default function AttendanceScreen() {
  const [isMapModalVisible, setIsMapModalVisible] = useState(false);
  const handleOpenMapModal = useCallback(() => setIsMapModalVisible(true), []);
  const handleCloseMapModal = useCallback(() => setIsMapModalVisible(false), []);
+ const handleOpenManualLogModal = useCallback(
+  () => setIsManualLogModalVisible(true),
+  [],
+ );
+ const handleCloseManualLogModal = useCallback(
+  () => setIsManualLogModalVisible(false),
+  [],
+ );
+ const handleManualLogSaved = useCallback(() => {
+  showDialog({
+   title: 'Travel log saved',
+   message: 'Your manual travel log has been saved successfully.',
+   variant: 'success',
+   primaryAction: {label: 'Okay'},
+  });
+ }, [showDialog]);
  const shiftStartMinutes = parseTimeToMinutes(SHIFT_WINDOW.start) ?? 540;
  const shiftEndMinutes = parseTimeToMinutes(SHIFT_WINDOW.end) ?? 1080;
  const hasMarkedIn = Boolean(todayEntry?.clockIn);
@@ -777,95 +803,125 @@ export default function AttendanceScreen() {
      </View>
     </AnimatedCard>
 
-    <AnimatedCard style={styles.card} delay={100}>
-     <View style={styles.travelHeaderRow}>
-      <View style={styles.travelHeaderTextWrap}>
-       <Text allowFontScaling={false} style={styles.sectionTitle}>
-        Travel
+    <AnimatedCard style={styles.activityHub} delay={100}>
+     <View style={styles.hubHeader}>
+      <View style={styles.hubTitleWrap}>
+       <Text allowFontScaling={false} style={styles.hubTitle}>
+        Activity Hub
        </Text>
-       <Text allowFontScaling={false} style={styles.outsideHelperText}>
-        Open a focused screen for billable travel tracking or manual route
-        entry.
+       <Text allowFontScaling={false} style={styles.hubSubtitle}>
+        Manage your travel and view records
        </Text>
       </View>
-      <View
+      {/* <View
        style={[
-        styles.travelStatusBadge,
-        shouldPromptForTravel
-         ? styles.travelStatusBadgePending
-         : styles.travelStatusBadgeIdle,
+        styles.hubStatusBadge,
+        shouldPromptForTravel ? styles.hubStatusActive : styles.hubStatusIdle,
        ]}>
-       <Text allowFontScaling={false} style={styles.travelStatusBadgeText}>
-        {shouldPromptForTravel ? 'Action Needed' : 'Ready'}
+       <View
+        style={[
+         styles.statusDot,
+         shouldPromptForTravel && styles.statusDotActive,
+        ]}
+       />
+       <Text allowFontScaling={false} style={styles.hubStatusText}>
+        {shouldPromptForTravel ? 'Action Needed' : 'Standby'}
        </Text>
-      </View>
+      </View> */}
      </View>
 
-     {shouldPromptForTravel ? (
-      <View style={styles.travelPrompt}>
-       <Text allowFontScaling={false} style={styles.travelPromptTitle}>
-        You are outside office during shift time
-       </Text>
-       <Text allowFontScaling={false} style={styles.travelPromptText}>
-        Start billable travel if this movement is work-related.
-       </Text>
-      </View>
-     ) : null}
-
-     {locationStatus === 'denied' || locationStatus === 'error' ? (
-      <TouchableOpacity
-       style={styles.manualLogNotice}
-       onPress={handleStartManualTravel}
-       activeOpacity={0.86}>
-       <Feather name="edit-3" size={16} color={theme.colors.warning} />
-       <View style={styles.manualLogNoticeText}>
-        <Text allowFontScaling={false} style={styles.travelPromptTitle}>
-         Manual Log
+     {/* Contextual Prompts */}
+     {shouldPromptForTravel && (
+      <View style={styles.hubPrompt}>
+       <View style={styles.promptIconWrap}>
+        <Feather name="navigation" size={16} color="#F59E0B" />
+       </View>
+       <View style={{flex: 1}}>
+        <Text allowFontScaling={false} style={styles.promptTitle}>
+         Outside Geofence
         </Text>
-        <Text allowFontScaling={false} style={styles.travelPromptText}>
-         Location is unavailable. Enter from/to locations and choose a Google
-         Maps route manually.
+        <Text allowFontScaling={false} style={styles.promptDesc}>
+         Shift is live. Start billable travel to track your movement.
         </Text>
        </View>
-       <Feather name="chevron-right" size={18} color={theme.colors.muted} />
-      </TouchableOpacity>
-     ) : null}
-
-     <View style={styles.travelActionRow}>
-      <TouchableOpacity
-       style={styles.outsideButton}
-       onPress={handleStartBillableTravel}>
-       <Feather name="navigation" size={14} color="#FFFFFF" />
-       <Text allowFontScaling={false} style={styles.outsideButtonText}>
-        Start billable travel
-       </Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-       style={styles.secondaryActionButton}
-       onPress={handleStartManualTravel}>
-       <Text allowFontScaling={false} style={styles.secondaryActionText}>
-        Manual Log
-       </Text>
-      </TouchableOpacity>
-     </View>
-    </AnimatedCard>
-
-    <AnimatedCard style={styles.card} delay={120}>
-     <View style={styles.travelHeaderRow}>
-      <View style={styles.travelHeaderTextWrap}>
-       <Text allowFontScaling={false} style={styles.sectionTitle}>
-        Attendance listing
-       </Text>
-       <Text allowFontScaling={false} style={styles.outsideHelperText}>
-        View daily attendance records on a separate screen.
-       </Text>
       </View>
+     )}
+
+     {(locationStatus === 'denied' || locationStatus === 'error') && (
       <TouchableOpacity
-       activeOpacity={0.82}
+       style={styles.hubPromptWarning}
+       onPress={handleStartManualTravel}
+       activeOpacity={0.8}>
+       <View style={styles.promptIconWrapWarning}>
+        <Feather name="alert-circle" size={16} color="#EF4444" />
+       </View>
+       <View style={{flex: 1}}>
+        <Text allowFontScaling={false} style={styles.promptTitleWarning}>
+         GPS Unavailable
+        </Text>
+        <Text allowFontScaling={false} style={styles.promptDescWarning}>
+         Switch to manual route entry to log your travel.
+        </Text>
+       </View>
+       <Feather name="chevron-right" size={16} color={theme.colors.muted} />
+      </TouchableOpacity>
+     )}
+
+     {/* Action Grid */}
+     <View style={styles.hubGrid}>
+      <TouchableOpacity
+       style={styles.hubGridItem}
+       onPress={handleStartBillableTravel}
+       activeOpacity={0.7}>
+       <LinearGradient
+        colors={['#10B98115', '#10B98105']}
+        style={styles.hubGridIconBg}>
+        <Feather name="play-circle" size={22} color="#10B981" />
+       </LinearGradient>
+       <Text allowFontScaling={false} style={styles.hubGridLabel}>
+        Bill Travel
+       </Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+       style={styles.hubGridItem}
+       onPress={handleOpenManualLogModal}
+       activeOpacity={0.7}>
+       <LinearGradient
+        colors={['#8B5CF615', '#8B5CF605']}
+        style={styles.hubGridIconBg}>
+        <Feather name="edit-3" size={20} color="#8B5CF6" />
+       </LinearGradient>
+       <Text allowFontScaling={false} style={styles.hubGridLabel}>
+        Add Travel Log
+       </Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+       style={styles.hubGridItem}
+       onPress={() => navigation.navigate('TravelLogs')}
+       activeOpacity={0.7}>
+       <LinearGradient
+        colors={['#3B82F615', '#3B82F605']}
+        style={styles.hubGridIconBg}>
+        <Feather name="map" size={20} color="#3B82F6" />
+       </LinearGradient>
+       <Text allowFontScaling={false} style={styles.hubGridLabel}>
+        Travel History
+       </Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+       style={styles.hubGridItem}
        onPress={() => navigation.navigate('AttendanceHistory' as never)}
-       style={styles.secondaryActionButton}>
-       <Text allowFontScaling={false} style={styles.secondaryActionText}>
-        Open list
+       activeOpacity={0.7}>
+       <LinearGradient
+        colors={['#EC489915', '#EC489905']}
+        style={styles.hubGridIconBg}>
+        <Feather name="calendar" size={20} color="#EC4899" />
+       </LinearGradient>
+       <Text allowFontScaling={false} style={styles.hubGridLabel}>
+        Attendance
        </Text>
       </TouchableOpacity>
      </View>
@@ -916,6 +972,16 @@ export default function AttendanceScreen() {
      </View>
     </View>
    </Modal>
+
+   <ManualLogModal
+    visible={isManualLogModalVisible}
+    onClose={handleCloseManualLogModal}
+    onSave={handleManualLogSaved}
+    theme={theme}
+    authToken={authToken ?? ''}
+    selectedProjectId={selectedProjectId}
+    projects={projects}
+   />
   </SafeAreaView>
  );
 }
@@ -1337,56 +1403,131 @@ const createStyles = (theme: AppTheme) => {
    color: theme.colors.primary,
    fontWeight: '700',
   },
-  travelHeaderRow: {
-   flexDirection: 'row',
-   alignItems: 'flex-start',
-   gap: 12,
+  activityHub: {
+   backgroundColor: glassCard,
+   borderRadius: 24,
+   borderWidth: 1,
+   borderColor,
+   padding: 18,
+   marginBottom: 12,
+   shadowColor: theme.colors.glowStrong,
+   shadowOffset: {width: 0, height: 10},
+   shadowOpacity: 0.15,
+   shadowRadius: 20,
   },
-  travelHeaderTextWrap: {
+  hubHeader: {
+   flexDirection: 'row',
+   alignItems: 'center',
+   justifyContent: 'space-between',
+   marginBottom: 18,
+  },
+  hubTitleWrap: {
    flex: 1,
   },
-  travelStatusBadge: {
-   borderRadius: 999,
-   paddingHorizontal: 10,
-   paddingVertical: 7,
-   borderWidth: 1,
-  },
-  travelStatusBadgeActive: {
-   backgroundColor: 'rgba(16,185,129,0.18)',
-   borderColor: 'rgba(16,185,129,0.38)',
-  },
-  travelStatusBadgePending: {
-   backgroundColor: 'rgba(245,158,11,0.18)',
-   borderColor: 'rgba(245,158,11,0.34)',
-  },
-  travelStatusBadgeIdle: {
-   backgroundColor: chipBg,
-   borderColor,
-  },
-  travelStatusBadgeText: {
+  hubTitle: {
+   fontSize: 18,
+   fontWeight: '800',
    color: theme.colors.text,
+  },
+  hubSubtitle: {
    fontSize: 11,
-   fontWeight: '700',
-  },
-  travelPrompt: {
-   marginTop: 4,
-   marginBottom: 12,
-   borderRadius: 16,
-   borderWidth: 1,
-   borderColor: 'rgba(245,158,11,0.32)',
-   backgroundColor: 'rgba(245,158,11,0.10)',
-   padding: 14,
-  },
-  travelPromptTitle: {
-   color: theme.colors.text,
-   fontSize: 14,
-   fontWeight: '700',
-  },
-  travelPromptText: {
-   marginTop: 4,
    color: theme.colors.muted,
-   fontSize: 12,
-   lineHeight: 18,
+   marginTop: 2,
+   fontWeight: '500',
+  },
+  hubStatusBadge: {
+   flexDirection: 'row',
+   alignItems: 'center',
+   paddingHorizontal: 10,
+   paddingVertical: 6,
+   borderRadius: 12,
+   backgroundColor: 'rgba(255,255,255,0.05)',
+   borderWidth: 1,
+   borderColor: 'rgba(255,255,255,0.08)',
+   gap: 6,
+  },
+  hubStatusActive: {
+   borderColor: 'rgba(245,158,11,0.3)',
+   backgroundColor: 'rgba(245,158,11,0.1)',
+  },
+  hubStatusIdle: {
+   opacity: 0.8,
+  },
+  statusDot: {
+   width: 6,
+   height: 6,
+   borderRadius: 3,
+   backgroundColor: theme.colors.muted,
+  },
+  statusDotActive: {
+   backgroundColor: '#F59E0B',
+  },
+  hubStatusText: {
+   fontSize: 10,
+   fontWeight: '800',
+   color: theme.colors.text,
+   letterSpacing: 0.5,
+   textTransform: 'uppercase',
+  },
+  hubPrompt: {
+   backgroundColor: 'rgba(245,158,11,0.08)',
+   borderRadius: 16,
+   padding: 12,
+   flexDirection: 'row',
+   alignItems: 'center',
+   gap: 12,
+   marginBottom: 16,
+   borderWidth: 1,
+   borderColor: 'rgba(245,158,11,0.15)',
+  },
+  hubPromptWarning: {
+   backgroundColor: 'rgba(239,68,68,0.08)',
+   borderRadius: 16,
+   padding: 12,
+   flexDirection: 'row',
+   alignItems: 'center',
+   gap: 12,
+   marginBottom: 16,
+   borderWidth: 1,
+   borderColor: 'rgba(239,68,68,0.15)',
+  },
+  promptIconWrap: {
+   width: 32,
+   height: 32,
+   borderRadius: 10,
+   backgroundColor: 'rgba(245,158,11,0.15)',
+   alignItems: 'center',
+   justifyContent: 'center',
+  },
+  promptIconWrapWarning: {
+   width: 32,
+   height: 32,
+   borderRadius: 10,
+   backgroundColor: 'rgba(239,68,68,0.15)',
+   alignItems: 'center',
+   justifyContent: 'center',
+  },
+  promptTitle: {
+   fontSize: 13,
+   fontWeight: '700',
+   color: theme.colors.text,
+  },
+  promptDesc: {
+   fontSize: 11,
+   color: theme.colors.muted,
+   marginTop: 2,
+   lineHeight: 15,
+  },
+  promptTitleWarning: {
+   fontSize: 13,
+   fontWeight: '700',
+   color: '#EF4444',
+  },
+  promptDescWarning: {
+   fontSize: 11,
+   color: 'rgba(239,68,68,0.8)',
+   marginTop: 2,
+   lineHeight: 15,
   },
   travelPromptActions: {
    marginTop: 12,
@@ -1420,24 +1561,34 @@ const createStyles = (theme: AppTheme) => {
    flexWrap: 'wrap',
    gap: 8,
   },
-  travelActionRow: {
-   marginTop: 12,
-   gap: 10,
+  hubGrid: {
+   flexDirection: 'row',
+   flexWrap: 'wrap',
+   justifyContent: 'space-between',
+   gap: 12,
   },
-  secondaryActionButton: {
-   borderRadius: 12,
-   minHeight: 44,
-   borderWidth: 1,
-   borderColor,
+  hubGridItem: {
+   width: '48%',
+   backgroundColor: 'rgba(255,255,255,0.03)',
+   borderRadius: 18,
+   padding: 14,
    alignItems: 'center',
    justifyContent: 'center',
-   paddingHorizontal: 14,
-   backgroundColor: 'transparent',
+   borderWidth: 1,
+   borderColor: 'rgba(255,255,255,0.05)',
   },
-  secondaryActionText: {
-   color: theme.colors.primary,
-   fontSize: 13,
+  hubGridIconBg: {
+   width: 44,
+   height: 44,
+   borderRadius: 14,
+   alignItems: 'center',
+   justifyContent: 'center',
+   marginBottom: 10,
+  },
+  hubGridLabel: {
+   fontSize: 12,
    fontWeight: '700',
+   color: theme.colors.text,
   },
   routeInputGrid: {
    marginTop: 8,

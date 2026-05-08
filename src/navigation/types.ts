@@ -1,3 +1,5 @@
+import type {LogEntry} from '../context/LogsContext';
+
 export type RootStackParamList = {
  Auth: undefined;
  Main: undefined;
@@ -12,5 +14,7 @@ export type RootStackParamList = {
   | undefined;
  ReportList: undefined;
  ReportDetail: {report: Record<string, unknown>} | undefined;
+ TravelLogs: undefined;
+ TravelLogDetail: {id?: number; log?: LogEntry} | undefined;
  DataViewer: undefined;
 };

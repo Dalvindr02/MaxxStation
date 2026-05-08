@@ -140,6 +140,17 @@ const sanitizeLogEntry = (log: unknown, index: number): LogEntry | null => {
    row.status === 'review'
     ? row.status
     : 'review',
+  fromLocation: row.fromLocation,
+  toLocation: row.toLocation,
+  fromCoords: row.fromCoords ?? null,
+  toCoords: row.toCoords ?? null,
+  routePoints: Array.isArray(row.routePoints) ? row.routePoints : [],
+  stops: Array.isArray(row.stops) ? row.stops : [],
+  routeDistanceMeters: row.routeDistanceMeters ?? null,
+  routeDurationSeconds: row.routeDurationSeconds ?? null,
+  routeSummary: row.routeSummary,
+  auditStatus: row.auditStatus,
+  auditFlags: row.auditFlags,
  };
 };
 
@@ -206,7 +217,7 @@ export const LogsScreen = () => {
    });
  }, [reduxLogs]);
 
- const previewLogs = useMemo(() => sortedLogs.slice(0, 20), [sortedLogs]);
+ const previewLogs = useMemo(() => sortedLogs, [sortedLogs]);
 
  const navigateToHistory = () => {
   navigation.navigate('LogsHistoryScreen', {date: formatDateKey(new Date())});
@@ -586,7 +597,7 @@ export const LogsScreen = () => {
        All Logs
       </Text>
       <Text allowFontScaling={false} style={styles.logsMetaText}>
-       Showing latest {previewLogs.length} entries
+       Showing {previewLogs.length} entries
       </Text>
      </View>
      <View style={styles.logsHeaderActions}>

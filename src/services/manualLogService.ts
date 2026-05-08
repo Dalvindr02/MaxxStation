@@ -3,7 +3,7 @@ import {
   API_ENDPOINTS,
   buildApiUrl,
 } from '../constants/api';
-import { LogEntry, LogStatus } from '../context/LogsContext';
+import { LogEntry, LogStatus, TravelCoordinate, TravelStop } from '../context/LogsContext';
 
 export type CreateManualLogPayload = {
   meeting_type: string;
@@ -40,6 +40,28 @@ export type ManualLogListResult = {
 export type DeleteManualLogResult = {
   success: boolean;
   message: string;
+};
+
+export type CreateTravelLogPayload = {
+  project_id: number;
+  start_lat: number;
+  start_lng: number;
+  end_lat: number;
+  end_lng: number;
+  distance: number;
+  duration: number;
+  start_time: string;
+  end_time: string;
+  mode: string;
+  purpose: string;
+  notes: string;
+  stops: Array<{ lat: number; lng: number }>;
+};
+
+export type CreateTravelLogResult = {
+  success: boolean;
+  message: string;
+  data: Record<string, unknown> | null;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -158,6 +180,36 @@ const findFirstBoolean = (payload: unknown, keys: string[]): boolean | null => {
   return null;
 };
 
+const findFirstNumber = (payload: unknown, keys: string[]): number | null => {
+  if (!isRecord(payload)) {
+    return null;
+  }
+
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+  }
+
+  for (const value of Object.values(payload)) {
+    if (isRecord(value)) {
+      const nested = findFirstNumber(value, keys);
+      if (nested !== null) {
+        return nested;
+      }
+    }
+  }
+
+  return null;
+};
+
 const findFirstArray = (payload: unknown, keys?: string[]): unknown[] | null => {
   if (Array.isArray(payload)) {
     return payload;
@@ -174,6 +226,8 @@ const findFirstArray = (payload: unknown, keys?: string[]): unknown[] | null => 
     'result',
     'items',
     'manual_logs',
+    'travel_logs',
+    'travel_log_list',
     'manualLogList',
   ]) {
     const value = payload[key];
@@ -248,6 +302,70 @@ const toStatus = (value: string | null): LogStatus => {
   return 'review';
 };
 
+const toCoordinate = (value: unknown): TravelCoordinate | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const latitudeValue = value.latitude ?? value.lat ?? value.start_lat ?? value.end_lat;
+  const longitudeValue = value.longitude ?? value.lng ?? value.lon ?? value.start_lng ?? value.end_lng;
+  const latitude =
+    typeof latitudeValue === 'number' ? latitudeValue : Number(latitudeValue);
+  const longitude =
+    typeof longitudeValue === 'number' ? longitudeValue : Number(longitudeValue);
+
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
+  }
+
+  return {latitude, longitude};
+};
+
+const parseTravelRoutePayload = (value: string | null) => {
+  if (!value) {
+    return {
+      routePoints: [] as TravelCoordinate[],
+      stops: [] as TravelStop[],
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    const rawRoute = Array.isArray(parsed)
+      ? parsed
+      : isRecord(parsed) && Array.isArray(parsed.route)
+      ? parsed.route
+      : [];
+    const rawStops = isRecord(parsed) && Array.isArray(parsed.stops)
+      ? parsed.stops
+      : [];
+
+    return {
+      routePoints: rawRoute
+        .map(toCoordinate)
+        .filter((point): point is TravelCoordinate => Boolean(point)),
+      stops: rawStops
+        .map(stop => {
+          const coordinate = toCoordinate(stop);
+          if (!coordinate) {
+            return null;
+          }
+          const travelStop: TravelStop = {...coordinate};
+          if (isRecord(stop) && typeof stop.label === 'string') {
+            travelStop.label = stop.label;
+          }
+          return travelStop;
+        })
+        .filter((stop): stop is TravelStop => Boolean(stop)),
+    };
+  } catch {
+    return {
+      routePoints: [] as TravelCoordinate[],
+      stops: [] as TravelStop[],
+    };
+  }
+};
+
 export const mapManualLogEntry = (
   item: unknown,
   index: number,
@@ -284,6 +402,29 @@ export const mapManualLogEntry = (
     findFirstString(item, ['end_time', 'to_time']) ?? endDateTime,
     startTime,
   );
+  const {routePoints, stops} = parseTravelRoutePayload(
+    findFirstString(item, ['route_polyline', 'polyline', 'route_points']),
+  );
+  const fromCoords =
+    toCoordinate(item.from_coords) ??
+    toCoordinate({lat: item.start_lat, lng: item.start_lng}) ??
+    toCoordinate(item.from_coordinates) ??
+    toCoordinate(item.origin) ??
+    (routePoints.length > 0 ? routePoints[0] : null);
+  const toCoords =
+    toCoordinate(item.to_coords) ??
+    toCoordinate({lat: item.end_lat, lng: item.end_lng}) ??
+    toCoordinate(item.to_coordinates) ??
+    toCoordinate(item.destination) ??
+    (routePoints.length > 0 ? routePoints[routePoints.length - 1] : null);
+
+  const rawDistance = findFirstNumber(item, ['route_distance_meters', 'distance', 'route_distance']);
+  // If distance is string "7.30", findFirstNumber handles it.
+  // Assuming distance is in KM if it's from the new response structure
+  const routeDistanceMeters = rawDistance ? (rawDistance < 1000 ? rawDistance * 1000 : rawDistance) : null;
+
+  const rawSpentMinutes = findFirstNumber(item, ['spent_time_minutes', 'duration_minutes', 'duration']);
+  const routeDurationSeconds = rawSpentMinutes ? rawSpentMinutes * 60 : findFirstNumber(item, ['route_duration_seconds']);
 
   return {
     id:
@@ -310,20 +451,28 @@ export const mapManualLogEntry = (
     startTime,
     endTime,
     category:
-      findFirstString(item, ['meeting_type', 'category', 'type']) ?? 'Meeting',
+      findFirstString(item, ['log_type', 'category', 'meeting_type', 'type']) ?? 'Travel Log',
     notes:
       findFirstString(item, [
-        'meeting_agenda',
-        'notes',
         'description',
+        'notes',
+        'meeting_agenda',
         'agenda',
       ]) ?? '',
     billable:
-      findFirstBoolean(item, ['billable', 'is_billable', 'billable_status']) ??
-      false,
-    status: toStatus(
-      findFirstString(item, ['status', 'approval_status', 'log_status']),
-    ),
+      findFirstBoolean(item, ['billable', 'is_billable', 'billable_status']) ?? false,
+    status: toStatus(findFirstString(item, ['status', 'approval_status', 'log_status'])),
+    fromLocation: findFirstString(item, ['from_address', 'from_location', 'origin', 'origin_address']),
+    toLocation: findFirstString(item, ['to_address', 'to_location', 'destination', 'destination_address']),
+    fromCoords,
+    toCoords,
+    routePoints,
+    stops,
+    routeDistanceMeters,
+    routeDurationSeconds,
+    routeSummary: findFirstString(item, ['route_summary', 'summary', 'description']),
+    googleDistance: findFirstString(item, ['google_distance']),
+    googleDuration: findFirstString(item, ['google_duration']),
   };
 };
 
@@ -391,6 +540,75 @@ export const createManualLogRequest = async (
     }
 
     throw new Error('Unable to create manual log. Please try again.');
+  }
+};
+
+export const createTravelLogRequest = async (
+  payload: CreateTravelLogPayload,
+  authToken?: string | null,
+): Promise<CreateTravelLogResult> => {
+  try {
+    if (!authToken?.trim()) {
+      throw new Error('Login token is missing. Please sign in again.');
+    }
+
+    console.log('Create travel log request payload:', JSON.stringify(payload, null, 2));
+
+    const response = await axios.post(
+      buildApiUrl(API_ENDPOINTS.travelLogCreate),
+      payload,
+      {
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+          Authorization: `Bearer ${authToken.trim()}`,
+        },
+      },
+    );
+
+    console.log('Create travel log API response:', response.data);
+
+    const responsePayload = isRecord(response.data)
+      ? (response.data as Record<string, unknown>)
+      : null;
+    
+    const success = responsePayload
+      ? getSuccessStatus(responsePayload) || response.status < 300
+      : response.status < 300;
+
+    const message =
+      (responsePayload &&
+        typeof responsePayload.message === 'string' &&
+        responsePayload.message.trim()) ||
+      (success ? 'Travel log created successfully.' : 'Failed to create travel log.');
+
+    if (!success) {
+      throw new Error(message);
+    }
+
+    return {
+      success,
+      message,
+      data: responsePayload,
+    };
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      console.log('Create travel log API error response:', error.response?.data);
+
+      const errorPayload = error.response?.data;
+      const fallback = error.response?.status
+        ? `Travel log request failed with status ${error.response.status}`
+        : 'Unable to create travel log. Please try again.';
+
+      throw new Error(getErrorMessage(errorPayload, fallback));
+    }
+
+    if (error instanceof Error) {
+      throw error;
+    }
+
+    throw new Error('Unable to create travel log. Please try again.');
   }
 };
 

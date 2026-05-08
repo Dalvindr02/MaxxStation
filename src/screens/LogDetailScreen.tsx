@@ -4,16 +4,17 @@ import {
  StyleSheet,
  Text,
  View,
- TouchableOpacity,
 } from 'react-native';
+import MapView, {Marker, Polyline, PROVIDER_GOOGLE} from 'react-native-maps';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
-import {useNavigation, useRoute} from '@react-navigation/native';
+import {useRoute} from '@react-navigation/native';
 import {TopHeader} from '../components/TopHeader';
 import {useAppTheme} from '../context/ThemeContext';
 import {LogEntry} from '../context/LogsContext';
 import {minutesToHours, parseTimeToMinutes} from '../utils/time';
 import {AppTheme} from '../theme';
+import {LatLng, WORK_LOCATION} from '../constants/workLocation';
 
 const getCategoryIcon = (key: string) =>
  ['Meeting', 'Field', 'Offline'].includes(key) ? key[0] : 'T';
@@ -61,10 +62,60 @@ const parseDateKey = (value?: string) => {
  return new Date(y, m - 1, d);
 };
 
+const formatDistance = (meters?: number | null) => {
+ if (!meters || meters <= 0) return 'Not available';
+ if (meters >= 1000) return `${(meters / 1000).toFixed(1)} km`;
+ return `${Math.round(meters)} m`;
+};
+
+const formatRouteDuration = (seconds?: number | null) => {
+ if (!seconds || seconds <= 0) return 'Not available';
+ const minutes = Math.round(seconds / 60);
+ const hours = Math.floor(minutes / 60);
+ const remainder = minutes % 60;
+ if (hours <= 0) return `${minutes}m`;
+ return remainder > 0 ? `${hours}h ${remainder}m` : `${hours}h`;
+};
+
+const getValidCoordinate = (value?: LatLng | null): LatLng | null => {
+ if (
+  value &&
+  Number.isFinite(value.latitude) &&
+  Number.isFinite(value.longitude)
+ ) {
+  return value;
+ }
+ return null;
+};
+
+const getMapRegion = (points: LatLng[]) => {
+ if (points.length === 0) {
+  return {
+   latitude: WORK_LOCATION.latitude,
+   longitude: WORK_LOCATION.longitude,
+   latitudeDelta: 0.04,
+   longitudeDelta: 0.04,
+  };
+ }
+
+ const latitudes = points.map(point => point.latitude);
+ const longitudes = points.map(point => point.longitude);
+ const minLat = Math.min(...latitudes);
+ const maxLat = Math.max(...latitudes);
+ const minLng = Math.min(...longitudes);
+ const maxLng = Math.max(...longitudes);
+
+ return {
+  latitude: (minLat + maxLat) / 2,
+  longitude: (minLng + maxLng) / 2,
+  latitudeDelta: Math.max((maxLat - minLat) * 1.8, 0.02),
+  longitudeDelta: Math.max((maxLng - minLng) * 1.8, 0.02),
+ };
+};
+
 export const LogDetailScreen = () => {
  const {theme} = useAppTheme();
  const styles = useMemo(() => createStyles(theme), [theme]);
- const navigation = useNavigation<any>();
  const route = useRoute<any>();
  const log: LogEntry = route.params?.log;
 
@@ -81,6 +132,29 @@ export const LogDetailScreen = () => {
 
  const duration = getDurationText(log.startTime, log.endTime);
  const date = parseDateKey(log.date);
+ const fromCoords = getValidCoordinate(log.fromCoords);
+ const toCoords = getValidCoordinate(log.toCoords);
+ const routePoints: LatLng[] = Array.isArray(log.routePoints)
+  ? log.routePoints
+     .map(point => getValidCoordinate(point))
+     .filter((point): point is LatLng => Boolean(point))
+  : [];
+ const stops = Array.isArray(log.stops)
+  ? log.stops.filter(stop => Boolean(getValidCoordinate(stop)))
+  : [];
+ const markerPoints = [
+  fromCoords,
+  toCoords,
+  ...stops,
+  ...(routePoints.length > 0 ? routePoints : []),
+ ].filter((point): point is LatLng => Boolean(point));
+ const hasTravelDetails =
+  Boolean(log.fromLocation || log.toLocation) ||
+  markerPoints.length > 0 ||
+  Boolean(log.routeSummary) ||
+  Boolean(log.routeDistanceMeters) ||
+  Boolean(log.routeDurationSeconds);
+ const mapRegion = getMapRegion(markerPoints);
 
  return (
   <SafeAreaView style={styles.safe}>
@@ -90,7 +164,7 @@ export const LogDetailScreen = () => {
     end={{x: 0.5, y: 1}}
     style={styles.backgroundGradient}
    />
-   <TopHeader title="Log Detail" />
+   <TopHeader title={hasTravelDetails ? 'Travel Log Detail' : 'Log Detail'} />
 
    <ScrollView
     showsVerticalScrollIndicator={false}
@@ -130,6 +204,127 @@ export const LogDetailScreen = () => {
     </View>
 
     <View style={styles.detailContainer}>
+     {hasTravelDetails && (
+      <View style={styles.detailCard}>
+       <View style={styles.cardHeader}>
+        <Text allowFontScaling={false} style={styles.cardIcon}>
+         📍
+        </Text>
+        <Text allowFontScaling={false} style={styles.cardTitle}>
+         Travel Route
+        </Text>
+       </View>
+
+       {markerPoints.length > 0 ? (
+        <View style={styles.mapWrap}>
+         <MapView
+          provider={PROVIDER_GOOGLE}
+          style={styles.map}
+          initialRegion={mapRegion}
+          region={mapRegion}
+          scrollEnabled={false}
+          zoomEnabled={false}
+          pitchEnabled={false}
+          rotateEnabled={false}
+          toolbarEnabled={false}>
+          {routePoints.length > 1 && (
+           <Polyline
+            coordinates={routePoints}
+            strokeColor={theme.colors.primary}
+            strokeWidth={4}
+           />
+          )}
+          {fromCoords && (
+           <Marker
+            coordinate={fromCoords}
+            title="From"
+            description={`${fromCoords.latitude.toFixed(
+             6,
+            )}, ${fromCoords.longitude.toFixed(6)}`}
+            pinColor="#2563EB"
+           />
+          )}
+          {toCoords && (
+           <Marker
+            coordinate={toCoords}
+            title="To"
+            description={`${toCoords.latitude.toFixed(
+             6,
+            )}, ${toCoords.longitude.toFixed(6)}`}
+            pinColor="#DC2626"
+           />
+          )}
+          {stops.map((stop, index) => (
+           <Marker
+            key={`${stop.latitude}-${stop.longitude}-${index}`}
+            coordinate={stop}
+            title={stop.label || `Stop ${index + 1}`}
+            description={`${stop.latitude.toFixed(6)}, ${stop.longitude.toFixed(
+             6,
+            )}`}
+            pinColor="#F59E0B"
+           />
+          ))}
+         </MapView>
+        </View>
+       ) : (
+        <Text allowFontScaling={false} style={styles.mutedText}>
+         Route coordinates are not available for this log.
+        </Text>
+       )}
+
+       <View style={styles.routeDetails}>
+        <Text allowFontScaling={false} style={styles.detailValue}>
+         <Text allowFontScaling={false} style={styles.detailLabel}>
+          From:{' '}
+         </Text>
+         {log.fromLocation || 'Not available'}
+        </Text>
+        {fromCoords && (
+         <Text allowFontScaling={false} style={styles.coordinateText}>
+          Lat {fromCoords.latitude.toFixed(6)} · Long{' '}
+          {fromCoords.longitude.toFixed(6)}
+         </Text>
+        )}
+        <Text allowFontScaling={false} style={styles.detailValue}>
+         <Text allowFontScaling={false} style={styles.detailLabel}>
+          To:{' '}
+         </Text>
+         {log.toLocation || 'Not available'}
+        </Text>
+        {toCoords && (
+         <Text allowFontScaling={false} style={styles.coordinateText}>
+          Lat {toCoords.latitude.toFixed(6)} · Long{' '}
+          {toCoords.longitude.toFixed(6)}
+         </Text>
+        )}
+        <View style={styles.routeMetricRow}>
+         <View style={styles.routeMetric}>
+          <Text allowFontScaling={false} style={styles.timeLabel}>
+           Distance
+          </Text>
+          <Text allowFontScaling={false} style={styles.timeValue}>
+           {formatDistance(log.routeDistanceMeters)}
+          </Text>
+         </View>
+         <View style={styles.routeMetric}>
+          <Text allowFontScaling={false} style={styles.timeLabel}>
+           Travel Time
+          </Text>
+          <Text allowFontScaling={false} style={styles.timeValue}>
+           {formatRouteDuration(log.routeDurationSeconds)}
+          </Text>
+         </View>
+        </View>
+        {log.routeSummary ? (
+         <Text allowFontScaling={false} style={styles.notesContent}>
+          {log.routeSummary}
+         </Text>
+        ) : null}
+       </View>
+      </View>
+     )}
+
      <View style={styles.detailCard}>
       <View style={styles.cardHeader}>
        <Text allowFontScaling={false} style={styles.cardIcon}>
@@ -329,6 +524,47 @@ const createStyles = (theme: AppTheme) => {
    shadowOpacity: 0.1,
    shadowRadius: 4,
    //    elevation: 3,
+  },
+  mapWrap: {
+   height: 220,
+   borderRadius: 12,
+   overflow: 'hidden',
+   borderWidth: 1,
+   borderColor,
+   marginBottom: 14,
+   backgroundColor: theme.colors.surface,
+  },
+  map: {
+   flex: 1,
+  },
+  routeDetails: {
+   gap: 6,
+  },
+  routeMetricRow: {
+   flexDirection: 'row',
+   gap: 12,
+   marginVertical: 8,
+  },
+  routeMetric: {
+   flex: 1,
+   borderWidth: 1,
+   borderColor,
+   borderRadius: 10,
+   padding: 12,
+   backgroundColor: theme.colors.surface,
+  },
+  coordinateText: {
+   color: theme.colors.muted,
+   fontSize: 12,
+   fontWeight: '600',
+   marginTop: -4,
+   marginBottom: 8,
+  },
+  mutedText: {
+   color: theme.colors.muted,
+   fontSize: 13,
+   fontWeight: '600',
+   marginBottom: 12,
   },
   cardHeader: {
    flexDirection: 'row',

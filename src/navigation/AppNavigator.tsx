@@ -15,6 +15,7 @@ import {CustomTabBar} from '../components/CustomTabBar';
 import AttendanceScreen from '../screens/AttendanceScreen';
 import AttendanceHistoryScreen from '../screens/AttendanceHistoryScreen';
 import AttendanceTravelScreen from '../screens/AttendanceTravelScreen';
+import {TravelLogListScreen} from '../screens/TravelLogListScreen';
 import {ExpensesScreen, ExpenseEntry} from '../screens/ExpensesScreen';
 import {ExpenseListScreen} from '../screens/ExpenseListScreen';
 import ExpenseDetailScreen from '../screens/ExpenseDetailScreen';
@@ -25,6 +26,7 @@ import {ProfileScreen} from '../screens/ProfileScreen';
 import {ReportScreen} from '../screens/ReportScreen';
 import LogsHistoryScreen from '../screens/LogHistoryScreen';
 import {LogDetailScreen} from '../screens/LogDetailScreen';
+import {TravelLogDetailScreen} from '../screens/TravelLogDetailScreen';
 import {ReportListScreen} from '../screens/ReportListScreen';
 import {ReportDetailScreen} from '../screens/ReportDetailScreen';
 import {useAppSelector} from '../store/hooks';
@@ -163,6 +165,22 @@ export const AppNavigator = () => {
       <Stack.Screen
        name="AttendanceTravel"
        component={AttendanceTravelScreen}
+       options={{
+        presentation: 'modal',
+        animation: 'slide_from_right',
+       }}
+      />
+      <Stack.Screen
+       name="TravelLogs"
+       component={TravelLogListScreen}
+       options={{
+        presentation: 'modal',
+        animation: 'slide_from_right',
+       }}
+      />
+      <Stack.Screen
+       name="TravelLogDetail"
+       component={TravelLogDetailScreen}
        options={{
         presentation: 'modal',
         animation: 'slide_from_right',

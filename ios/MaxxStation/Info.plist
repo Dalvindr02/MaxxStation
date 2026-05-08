@@ -26,8 +26,11 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>FirebaseAppDelegateProxyEnabled</key>
 	<false/>
+	<key>GOOGLE_MAPS_API_KEY</key>
+	<string>AIzaSyCy8aF-a3oZMNVy2FyYp0XxQ9BJwq1_ANk</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>

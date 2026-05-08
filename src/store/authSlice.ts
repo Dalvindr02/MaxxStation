@@ -23,15 +23,11 @@ const initialState: AuthState = {
 export const login = createAsyncThunk(
  'auth/login',
  async (
-  credentials: {email: string; password: string; projectId?: string | null},
+  credentials: {email: string; password: string},
   {rejectWithValue},
  ) => {
   try {
-   const result = await loginRequest(
-    credentials.email,
-    credentials.password,
-    credentials.projectId,
-   );
+   const result = await loginRequest(credentials.email, credentials.password);
    console.log('Saving login data to Redux persist:', {
     token: result.token,
     user: result.user,

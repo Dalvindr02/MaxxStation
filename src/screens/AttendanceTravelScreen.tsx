@@ -419,7 +419,7 @@ export default function AttendanceTravelScreen() {
          }
         />
        ))}
-       {mode === 'manual' ? (
+       {/* {mode === 'manual' ? (
         <MapViewDirections
          origin={fromCoords}
          destination={toCoords}
@@ -451,7 +451,7 @@ export default function AttendanceTravelScreen() {
           );
          }}
         />
-       ) : null}
+       ) : null} */}
       </MapView>
       <TouchableOpacity
        style={styles.mapExpandButton}

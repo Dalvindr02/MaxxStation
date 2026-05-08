@@ -76,6 +76,17 @@ const sanitizeLogEntry = (log: Partial<LogEntry>, index: number): LogEntry => ({
   log.status === 'review'
    ? log.status
    : 'review',
+ fromLocation: log.fromLocation,
+ toLocation: log.toLocation,
+ fromCoords: log.fromCoords ?? null,
+ toCoords: log.toCoords ?? null,
+ routePoints: Array.isArray(log.routePoints) ? log.routePoints : [],
+ stops: Array.isArray(log.stops) ? log.stops : [],
+ routeDistanceMeters: log.routeDistanceMeters ?? null,
+ routeDurationSeconds: log.routeDurationSeconds ?? null,
+ routeSummary: log.routeSummary,
+ auditStatus: log.auditStatus,
+ auditFlags: log.auditFlags,
 });
 
 export default function LogsHistoryScreen() {
@@ -269,7 +280,12 @@ export default function LogsHistoryScreen() {
        {index !== logsByDate.length - 1 && <View style={styles.timelineLine} />}
       </View>
       <AnimatedCard style={styles.logCardWrap} delay={70 + index * 15}>
-       <Pressable style={({pressed}) => [styles.logCard]}>
+       <Pressable
+        style={({pressed}) => [
+         styles.logCard,
+         pressed && styles.logCardPressed,
+        ]}
+        onPress={() => navigation.navigate('LogDetailScreen', {log})}>
         <View style={styles.logHeader}>
          <View style={styles.logLeft}>
           <Text allowFontScaling={false} style={styles.timeText}>

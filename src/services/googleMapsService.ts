@@ -5,8 +5,15 @@ import {LatLng} from '../constants/workLocation';
 
 // Load the Google Maps Web API key from the native environment.
 // This keeps the key out of source control and lets the app read it from .env.
+// Fallback: You can temporarily hardcode the key here for testing
 export const GOOGLE_MAPS_WEB_API_KEY =
- Config.GOOGLE_MAPS_WEB_API_KEY?.trim() ?? '';
+ Config.GOOGLE_MAPS_WEB_API_KEY?.trim() || '';
+('');
+
+console.log(
+ '[GoogleMapsService] API Key loaded:',
+ GOOGLE_MAPS_WEB_API_KEY ? '✓ Present' : '✗ Missing',
+);
 
 Geocoder.init(GOOGLE_MAPS_WEB_API_KEY);
 
@@ -192,6 +199,44 @@ export const geocodeAddress = async (
    error instanceof Error
     ? error.message
     : 'Unable to search address with geocoding.',
+  );
+ }
+};
+
+export const reverseGeocodeCoords = async (
+ coords: LatLng,
+): Promise<GeocodedPlace> => {
+ assertApiKey();
+
+ try {
+  const response = await axios.get(
+   'https://maps.googleapis.com/maps/api/geocode/json',
+   {
+    params: {
+     latlng: `${coords.latitude},${coords.longitude}`,
+     key: GOOGLE_MAPS_WEB_API_KEY,
+    },
+   },
+  );
+
+  const result = Array.isArray(response.data?.results)
+   ? response.data.results[0]
+   : null;
+  const fallback = `${coords.latitude.toFixed(5)}, ${coords.longitude.toFixed(
+   5,
+  )}`;
+
+  return {
+   placeId: String(result?.place_id ?? fallback),
+   label: String(result?.formatted_address ?? fallback),
+   address: String(result?.formatted_address ?? fallback),
+   coords,
+  };
+ } catch (error) {
+  throw new Error(
+   error instanceof Error
+    ? error.message
+    : 'Unable to fetch address for selected stop.',
   );
  }
 };

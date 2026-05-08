@@ -4,6 +4,7 @@ import React_RCTAppDelegate
 import ReactAppDependencyProvider
 import UserNotifications
 import FirebaseCore
+import GoogleMaps
 #if canImport(FirebaseMessaging)
 import FirebaseMessaging
 #endif
@@ -20,6 +21,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
   ) -> Bool {
     FirebaseApp.configure()
+    configureGoogleMaps()
     UNUserNotificationCenter.current().delegate = self
 #if canImport(FirebaseMessaging)
     Messaging.messaging().delegate = self
@@ -28,6 +30,18 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     setUpReactNativeFactoryIfNeeded()
 
     return true
+  }
+
+  private func configureGoogleMaps() {
+    guard
+      let apiKey = Bundle.main.object(forInfoDictionaryKey: "GOOGLE_MAPS_API_KEY") as? String,
+      !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    else {
+      print("Google Maps API key is missing from Info.plist")
+      return
+    }
+
+    GMSServices.provideAPIKey(apiKey)
   }
 
   func application(
