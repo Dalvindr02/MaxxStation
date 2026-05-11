@@ -5,6 +5,7 @@ import authReducer from './authSlice';
 import projectsReducer from './projectsSlice';
 import logReducer from './logSlice';
 import travelLogReducer from './travelLogSlice';
+import homeReducer from './homeSlice';
 const authPersistConfig = {
   key: 'auth',
   storage: AsyncStorage,
@@ -15,6 +16,7 @@ const rootReducer = combineReducers({
   projects: projectsReducer,
   logs: logReducer,
   travelLogs: travelLogReducer,
+  home: homeReducer,
 });
 
 export const store = configureStore({

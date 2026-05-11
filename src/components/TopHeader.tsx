@@ -25,6 +25,7 @@ type TopHeaderProps = {
  onRightPress?: () => void;
  onBackPress?: () => void;
  forceShowBack?: boolean;
+ hideBack?: boolean;
  style?: StyleProp<ViewStyle>;
 };
 
@@ -35,13 +36,14 @@ export const TopHeader = ({
  onRightPress,
  onBackPress,
  forceShowBack,
+ hideBack,
  style,
 }: TopHeaderProps) => {
  const navigation = useNavigation<any>();
  const {theme} = useAppTheme();
  const auth = useAppSelector(state => state.auth);
  const styles = useMemo(() => createStyles(theme), [theme]);
- const showBack = forceShowBack ?? navigation.canGoBack();
+ const showBack = !hideBack && (forceShowBack ?? navigation.canGoBack());
  const profile = useMemo(
   () => buildHeaderProfile(auth.loginData, auth.user),
   [auth.loginData, auth.user],

@@ -14,7 +14,7 @@ import MapView, {
   PROVIDER_GOOGLE,
   Callout,
 } from 'react-native-maps';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import Feather from 'react-native-vector-icons/Feather';
@@ -42,7 +42,8 @@ const cleanAddress = (addr: string | undefined) => {
 
 export const TravelLogDetailScreen = () => {
   const { theme } = useAppTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
+  const insets = useSafeAreaInsets();
+  const styles = useMemo(() => createStyles(theme, insets), [theme, insets]);
   const route = useRoute<any>();
   const navigation = useNavigation();
   const dispatch = useAppDispatch();
@@ -179,12 +180,17 @@ export const TravelLogDetailScreen = () => {
     if (allCoords.length > 0 && mapRef.current) {
       setTimeout(() => {
         mapRef.current?.fitToCoordinates(allCoords, {
-          edgePadding: { top: 70, right: 70, bottom: 70, left: 70 },
+          edgePadding: { 
+            top: isMapExpanded ? insets.top + 100 : 100, 
+            right: 80, 
+            bottom: isMapExpanded ? insets.bottom + 180 : 100, 
+            left: 80 
+          },
           animated: true,
         });
-      }, 1000);
+      }, 800);
     }
-  }, [allCoords, isMapExpanded]);
+  }, [allCoords, isMapExpanded, insets]);
 
   const handleCloseCallout = (type: 'start' | 'end' | number) => {
     if (type === 'start') startMarkerRef.current?.hideCallout();
@@ -228,9 +234,11 @@ export const TravelLogDetailScreen = () => {
   if (isLoading) {
     return (
       <SafeAreaView style={styles.safe}>
-        <TopHeader title="Travel Detail" />
+        <View style={{ padding: 14 }}>
+          <TopHeader title="Travel Detail" />
+        </View>
         <View style={styles.center}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
+          <ActivityIndicator key="travel-log-detail-loading" size="large" color={theme.colors.primary} />
           <Text style={styles.loadingText}>Fetching route data...</Text>
         </View>
       </SafeAreaView>
@@ -240,7 +248,9 @@ export const TravelLogDetailScreen = () => {
   if (error || !log) {
     return (
       <SafeAreaView style={styles.safe}>
-        <TopHeader title="Travel Detail" />
+        <View style={{ padding: 14 }}>
+          <TopHeader title="Travel Detail" />
+        </View>
         <View style={styles.center}>
           <Feather name="alert-circle" size={48} color={theme.colors.danger} />
           <Text style={styles.errorText}>{error || 'Log detail not found'}</Text>
@@ -262,12 +272,15 @@ export const TravelLogDetailScreen = () => {
         end={{ x: 0.5, y: 1 }}
         style={styles.backgroundGradient}
       />
-      <TopHeader title="Travel  Detail" />
-
+      {!isMapExpanded && (
+        <View style={{ padding: 14 }}>
+          <TopHeader title="Travel Detail" />
+        </View>
+      )}
       <ScrollView
         scrollEnabled={!isMapExpanded}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}>
+        contentContainerStyle={[styles.scrollContent, isMapExpanded && { flexGrow: 1, paddingBottom: 0 }]}>
         {/* Map Section */}
         <AnimatedCard
           delay={100}
@@ -396,7 +409,10 @@ export const TravelLogDetailScreen = () => {
               })}
             </MapView>
             <TouchableOpacity
-              style={styles.expandButton}
+              style={[
+                styles.expandButton,
+                isMapExpanded && { top: insets.top > 0 ? insets.top + 10 : 20 }
+              ]}
               onPress={() => setIsMapExpanded(!isMapExpanded)}>
               <Feather
                 name={isMapExpanded ? 'minimize-2' : 'maximize-2'}
@@ -407,7 +423,10 @@ export const TravelLogDetailScreen = () => {
 
             {/* Custom Info Overlay */}
             {selectedPoint && (
-              <AnimatedCard style={styles.floatingInfoCard}>
+              <AnimatedCard style={[
+                styles.floatingInfoCard,
+                isMapExpanded && { bottom: insets.bottom > 0 ? insets.bottom + 20 : 30 }
+              ]}>
                 <View style={styles.calloutHeader}>
                   <View style={styles.calloutTitleGroup}>
                     <Feather
@@ -652,7 +671,7 @@ export const TravelLogDetailScreen = () => {
   );
 };
 
-const createStyles = (theme: AppTheme) =>
+const createStyles = (theme: AppTheme, insets: any) =>
   StyleSheet.create({
     safe: {
       flex: 1,
@@ -710,14 +729,18 @@ const createStyles = (theme: AppTheme) =>
       borderColor: theme.colors.border,
     },
     mapExpanded: {
-      margin: 0,
-      borderRadius: 0,
-      height: Dimensions.get('window').height - 100,
+      margin: 10,
+      borderRadius: 24,
+      flex: 1,
+      height: Dimensions.get('window').height - (insets.top + insets.bottom + 40),
+      overflow: 'hidden',
     },
     mapContainer: {
       height: 320,
       width: '100%',
       position: 'relative',
+      borderRadius: 24,
+      overflow: 'hidden',
     },
     mapContainerExpanded: {
       height: '100%',
@@ -733,6 +756,8 @@ const createStyles = (theme: AppTheme) =>
     },
     map: {
       ...StyleSheet.absoluteFillObject,
+      borderRadius: 24,
+      overflow: 'hidden',
     },
     markerContainer: {
       width: 24,

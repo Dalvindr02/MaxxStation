@@ -39,6 +39,29 @@ const getDuration = (start: string, end: string) => {
  return `${h}h ${m}m`;
 };
 
+const parseBillableStatus = (value: unknown): boolean => {
+ if (typeof value === 'boolean') {
+  return value;
+ }
+ if (typeof value === 'number') {
+  return value === 1;
+ }
+ if (typeof value === 'string') {
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'billable', 'is_billable'].includes(normalized)) {
+   return true;
+  }
+  if (
+   ['0', 'false', 'no', 'non-billable', 'non_billable', 'non billable'].includes(
+    normalized,
+   )
+  ) {
+   return false;
+  }
+ }
+ return false;
+};
+
 const sanitizeLogEntry = (log: Partial<LogEntry>, index: number): LogEntry => ({
  id:
   typeof log.id === 'string' && log.id.trim() ? log.id : `manual-log-${index}`,
@@ -69,7 +92,7 @@ const sanitizeLogEntry = (log: Partial<LogEntry>, index: number): LogEntry => ({
    ? log.category
    : 'Meeting',
  notes: typeof log.notes === 'string' ? log.notes : '',
- billable: Boolean(log.billable),
+ billable: parseBillableStatus(log.billable),
  status:
   log.status === 'approved' ||
   log.status === 'rejected' ||

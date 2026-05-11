@@ -4,20 +4,36 @@ import {
  StyleSheet,
  Text,
  View,
+ TouchableOpacity,
+ StatusBar,
 } from 'react-native';
 import MapView, {Marker, Polyline, PROVIDER_GOOGLE} from 'react-native-maps';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
-import {useRoute} from '@react-navigation/native';
+import {useRoute, useNavigation} from '@react-navigation/native';
+import Feather from 'react-native-vector-icons/Feather';
+import Animated, {FadeInUp} from 'react-native-reanimated';
+
 import {TopHeader} from '../components/TopHeader';
+import {AnimatedCard} from '../components/ui';
 import {useAppTheme} from '../context/ThemeContext';
 import {LogEntry} from '../context/LogsContext';
 import {minutesToHours, parseTimeToMinutes} from '../utils/time';
 import {AppTheme} from '../theme';
 import {LatLng, WORK_LOCATION} from '../constants/workLocation';
 
-const getCategoryIcon = (key: string) =>
- ['Meeting', 'Field', 'Offline'].includes(key) ? key[0] : 'T';
+const getCategoryIcon = (key: string) => {
+ switch (key) {
+  case 'Meeting':
+   return 'users';
+  case 'Field':
+   return 'map-pin';
+  case 'Offline':
+   return 'wifi-off';
+  default:
+   return 'tag';
+ }
+};
 
 const getCategoryColor = (key: string) => {
  switch (key) {
@@ -28,60 +44,149 @@ const getCategoryColor = (key: string) => {
   case 'Offline':
    return '#F59E0B'; // yellow
   default:
-   return '#6B7280'; // gray
+   return '#6366F1'; // indigo
  }
 };
 
-const getStatusColor = (status: string) => {
- switch (status) {
+const getStatusConfig = (status: string) => {
+ switch (status.toLowerCase()) {
   case 'approved':
-   return '#10B981'; // green
+   return {color: '#10B981', label: 'APPROVED', icon: 'check-circle'};
   case 'rejected':
-   return '#EF4444'; // red
+   return {color: '#EF4444', label: 'REJECTED', icon: 'x-circle'};
   case 'review':
-   return '#F59E0B'; // yellow
+   return {color: '#F59E0B', label: 'PENDING', icon: 'clock'};
   default:
-   return '#6B7280'; // gray
+   return {color: '#6B7280', label: 'UNKNOWN', icon: 'help-circle'};
  }
 };
 
 const getDurationText = (start: string, end: string) => {
  const s = parseTimeToMinutes(start);
  const e = parseTimeToMinutes(end);
- if (s === null || e === null) return '0h';
+ if (s === null || e === null) return '0h 0m';
  return minutesToHours(e - s);
 };
 
-const formatDisplayDate = (date: Date) =>
- date.toLocaleDateString([], {month: 'short', day: 'numeric', year: 'numeric'});
+const formatDisplayDate = (dateStr: string) => {
+ const date = new Date(dateStr);
+ if (isNaN(date.getTime())) return dateStr;
+ return date.toLocaleDateString([], {
+  weekday: 'long',
+  month: 'long',
+  day: 'numeric',
+  year: 'numeric',
+ });
+};
 
-const parseDateKey = (value?: string) => {
- if (!value || typeof value !== 'string') return new Date();
- const [y, m, d] = value.split('-').map(Number);
- if (!y || !m || !d) return new Date();
- return new Date(y, m - 1, d);
+const getDateFromKey = (dateStr: string) => {
+ const parts = dateStr.split('-').map(Number);
+ if (parts.length === 3 && parts.every(Number.isFinite)) {
+  return new Date(parts[0], parts[1] - 1, parts[2]);
+ }
+
+ const parsed = new Date(dateStr);
+ return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+};
+
+const formatLongDate = (date: Date) =>
+ date.toLocaleDateString([], {
+  weekday: 'short',
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+ });
+
+const formatTimeToAmPm = (time: string) => {
+ const minutes = parseTimeToMinutes(time);
+ if (minutes === null) {
+  return time || 'N/A';
+ }
+
+ const hours = Math.floor(minutes / 60);
+ const mins = minutes % 60;
+ const suffix = hours >= 12 ? 'PM' : 'AM';
+ const displayHour = hours % 12 || 12;
+
+ return `${displayHour}:${String(mins).padStart(2, '0')} ${suffix}`;
+};
+
+const getDateTimeDisplay = (dateStr: string, time: string, offsetDays = 0) => {
+ const date = getDateFromKey(dateStr);
+ date.setDate(date.getDate() + offsetDays);
+
+ return {
+  date: formatLongDate(date),
+  time: formatTimeToAmPm(time),
+ };
 };
 
 const formatDistance = (meters?: number | null) => {
- if (!meters || meters <= 0) return 'Not available';
- if (meters >= 1000) return `${(meters / 1000).toFixed(1)} km`;
+ if (!meters || meters <= 0) return 'N/A';
+ if (meters >= 1000) return `${(meters / 1000).toFixed(2)} km`;
  return `${Math.round(meters)} m`;
 };
 
-const formatRouteDuration = (seconds?: number | null) => {
- if (!seconds || seconds <= 0) return 'Not available';
- const minutes = Math.round(seconds / 60);
- const hours = Math.floor(minutes / 60);
- const remainder = minutes % 60;
- if (hours <= 0) return `${minutes}m`;
- return remainder > 0 ? `${hours}h ${remainder}m` : `${hours}h`;
+const parseBillableStatus = (value: unknown): boolean => {
+ if (typeof value === 'boolean') {
+  return value;
+ }
+
+ if (typeof value === 'number') {
+  return value === 1;
+ }
+
+ if (typeof value === 'string') {
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'billable', 'is_billable'].includes(normalized)) {
+   return true;
+  }
+  if (
+   [
+    '0',
+    'false',
+    'no',
+    'non-billable',
+    'non_billable',
+    'non billable',
+   ].includes(normalized)
+  ) {
+   return false;
+  }
+ }
+
+ return false;
+};
+
+const cleanNotesText = (value: unknown): string => {
+ if (typeof value !== 'string') {
+  return '';
+ }
+
+ const trimmed = value.trim();
+ const normalized = trimmed.toLowerCase();
+ if (
+  [
+   'billable',
+   'is_billable',
+   'non-billable',
+   'non_billable',
+   'non billable',
+  ].includes(normalized)
+ ) {
+  return '';
+ }
+
+ return trimmed;
 };
 
 const getValidCoordinate = (value?: LatLng | null): LatLng | null => {
  if (
   value &&
   Number.isFinite(value.latitude) &&
-  Number.isFinite(value.longitude)
+  Number.isFinite(value.longitude) &&
+  value.latitude !== 0 &&
+  value.longitude !== 0
  ) {
   return value;
  }
@@ -108,8 +213,8 @@ const getMapRegion = (points: LatLng[]) => {
  return {
   latitude: (minLat + maxLat) / 2,
   longitude: (minLng + maxLng) / 2,
-  latitudeDelta: Math.max((maxLat - minLat) * 1.8, 0.02),
-  longitudeDelta: Math.max((maxLng - minLng) * 1.8, 0.02),
+  latitudeDelta: Math.max((maxLat - minLat) * 1.5, 0.02),
+  longitudeDelta: Math.max((maxLng - minLng) * 1.5, 0.02),
  };
 };
 
@@ -117,6 +222,7 @@ export const LogDetailScreen = () => {
  const {theme} = useAppTheme();
  const styles = useMemo(() => createStyles(theme), [theme]);
  const route = useRoute<any>();
+ const navigation = useNavigation();
  const log: LogEntry = route.params?.log;
 
  if (!log) {
@@ -124,14 +230,36 @@ export const LogDetailScreen = () => {
    <SafeAreaView style={styles.safe}>
     <TopHeader title="Log Detail" />
     <View style={styles.center}>
+     <Feather name="alert-circle" size={48} color={theme.colors.danger} />
      <Text style={styles.errorText}>Log not found</Text>
+     <TouchableOpacity
+      style={styles.backButton}
+      onPress={() => navigation.goBack()}>
+      <Text style={styles.backButtonText}>Go Back</Text>
+     </TouchableOpacity>
     </View>
    </SafeAreaView>
   );
  }
 
  const duration = getDurationText(log.startTime, log.endTime);
- const date = parseDateKey(log.date);
+ const statusConfig = getStatusConfig(log.status);
+ const categoryColor = getCategoryColor(log.category);
+ const isBillable = parseBillableStatus(log.billable);
+ const cleanNotes = cleanNotesText(log.notes);
+ const startMinutes = parseTimeToMinutes(log.startTime);
+ const endMinutes = parseTimeToMinutes(log.endTime);
+ const endDayOffset =
+  startMinutes !== null && endMinutes !== null && endMinutes < startMinutes
+   ? 1
+   : 0;
+ const startDateTime = getDateTimeDisplay(log.date, log.startTime);
+ const endDateTime = getDateTimeDisplay(log.date, log.endTime, endDayOffset);
+ const billableHighlightColor = isBillable
+  ? theme.colors.success
+  : theme.colors.danger;
+ const billableLabel = isBillable ? 'Billable' : 'Non-Billable';
+
  const fromCoords = getValidCoordinate(log.fromCoords);
  const toCoords = getValidCoordinate(log.toCoords);
  const routePoints: LatLng[] = Array.isArray(log.routePoints)
@@ -139,295 +267,257 @@ export const LogDetailScreen = () => {
      .map(point => getValidCoordinate(point))
      .filter((point): point is LatLng => Boolean(point))
   : [];
- const stops = Array.isArray(log.stops)
-  ? log.stops.filter(stop => Boolean(getValidCoordinate(stop)))
-  : [];
+
  const markerPoints = [
   fromCoords,
   toCoords,
-  ...stops,
   ...(routePoints.length > 0 ? routePoints : []),
  ].filter((point): point is LatLng => Boolean(point));
- const hasTravelDetails =
-  Boolean(log.fromLocation || log.toLocation) ||
-  markerPoints.length > 0 ||
-  Boolean(log.routeSummary) ||
-  Boolean(log.routeDistanceMeters) ||
-  Boolean(log.routeDurationSeconds);
+
+ const hasMap = markerPoints.length > 0;
  const mapRegion = getMapRegion(markerPoints);
 
  return (
   <SafeAreaView style={styles.safe}>
+   <StatusBar barStyle="light-content" />
    <LinearGradient
     colors={theme.gradients.screen}
     start={{x: 0.5, y: 0}}
     end={{x: 0.5, y: 1}}
     style={styles.backgroundGradient}
    />
-   <TopHeader title={hasTravelDetails ? 'Travel Log Detail' : 'Log Detail'} />
+   <TopHeader title="Log Details" />
 
    <ScrollView
     showsVerticalScrollIndicator={false}
     contentContainerStyle={styles.scrollContent}>
-    <View style={styles.heroSection}>
+    {/* Hero Section */}
+    <Animated.View
+     entering={FadeInUp.delay(100).duration(600)}
+     style={styles.heroSection}>
      <LinearGradient
-      colors={[
-       getCategoryColor(log.category),
-       getCategoryColor(log.category) + '80',
-      ]}
+      colors={['rgba(255,255,255,0.08)', 'rgba(255,255,255,0.02)']}
       start={{x: 0, y: 0}}
       end={{x: 1, y: 1}}
       style={styles.heroGradient}>
-      <View style={styles.heroIcon}>
-       <Text allowFontScaling={false} style={styles.heroIconText}>
-        {getCategoryIcon(log.category)}
-       </Text>
-      </View>
-      <View style={styles.heroContent}>
-       <Text allowFontScaling={false} style={styles.heroTitle}>
-        {log.category} Session
-       </Text>
-       <Text allowFontScaling={false} style={styles.heroSubtitle}>
-        {formatDisplayDate(date)} • {duration}
-       </Text>
+      <View
+       style={[styles.heroGlow, {backgroundColor: categoryColor + '1A'}]}
+      />
+      <View style={styles.heroHeader}>
+       <View
+        style={[
+         styles.categoryIconContainer,
+         {borderColor: categoryColor + '4D'},
+        ]}>
+        <Feather
+         name={getCategoryIcon(log.category)}
+         size={26}
+         color={categoryColor}
+        />
+       </View>
        <View
         style={[
          styles.statusBadge,
-         {backgroundColor: getStatusColor(log.status)},
+         {
+          borderColor: statusConfig.color + '4D',
+          backgroundColor: statusConfig.color + '1A',
+         },
         ]}>
-        <Text allowFontScaling={false} style={styles.statusBadgeText}>
-         {log.status.toUpperCase()}
+        <Feather
+         name={statusConfig.icon}
+         size={12}
+         color={statusConfig.color}
+        />
+        <Text style={[styles.statusBadgeText, {color: statusConfig.color}]}>
+         {statusConfig.label}
         </Text>
        </View>
+      </View>
+
+      <Text style={styles.heroTitle}>{log.category} Session</Text>
+      <Text style={styles.heroSubtitle}>{formatDisplayDate(log.date)}</Text>
+
+      <View style={styles.heroStatsRow}>
+       <View style={styles.heroStatItem}>
+        <Text style={styles.heroStatLabel}>Duration</Text>
+        <Text style={styles.heroStatValue}>{duration}</Text>
+       </View>
+       <View style={styles.heroStatDivider} />
+       {/* <View style={styles.heroStatItem}>
+        <Text style={styles.heroStatLabel}>Billable Status</Text>
+        <View style={styles.billableBadgeContainer}>
+         <Feather
+          name={isBillable ? 'check-circle' : 'slash'}
+          size={14}
+          color={isBillable ? theme.colors.success : theme.colors.muted}
+         />
+         <Text
+          style={[
+           styles.heroStatValue,
+           {
+            color: isBillable ? theme.colors.success : theme.colors.muted,
+            marginLeft: 6,
+           },
+          ]}>
+          {isBillable ? 'BILLABLE' : 'NON-BILLABLE'}
+         </Text>
+        </View>
+       </View> */}
       </View>
      </LinearGradient>
-    </View>
+    </Animated.View>
 
-    <View style={styles.detailContainer}>
-     {hasTravelDetails && (
-      <View style={styles.detailCard}>
-       <View style={styles.cardHeader}>
-        <Text allowFontScaling={false} style={styles.cardIcon}>
-         📍
-        </Text>
-        <Text allowFontScaling={false} style={styles.cardTitle}>
-         Travel Route
-        </Text>
-       </View>
-
-       {markerPoints.length > 0 ? (
-        <View style={styles.mapWrap}>
-         <MapView
-          provider={PROVIDER_GOOGLE}
-          style={styles.map}
-          initialRegion={mapRegion}
-          region={mapRegion}
-          scrollEnabled={false}
-          zoomEnabled={false}
-          pitchEnabled={false}
-          rotateEnabled={false}
-          toolbarEnabled={false}>
-          {routePoints.length > 1 && (
-           <Polyline
-            coordinates={routePoints}
-            strokeColor={theme.colors.primary}
-            strokeWidth={4}
-           />
-          )}
-          {fromCoords && (
-           <Marker
-            coordinate={fromCoords}
-            title="From"
-            description={`${fromCoords.latitude.toFixed(
-             6,
-            )}, ${fromCoords.longitude.toFixed(6)}`}
-            pinColor="#2563EB"
-           />
-          )}
-          {toCoords && (
-           <Marker
-            coordinate={toCoords}
-            title="To"
-            description={`${toCoords.latitude.toFixed(
-             6,
-            )}, ${toCoords.longitude.toFixed(6)}`}
-            pinColor="#DC2626"
-           />
-          )}
-          {stops.map((stop, index) => (
-           <Marker
-            key={`${stop.latitude}-${stop.longitude}-${index}`}
-            coordinate={stop}
-            title={stop.label || `Stop ${index + 1}`}
-            description={`${stop.latitude.toFixed(6)}, ${stop.longitude.toFixed(
-             6,
-            )}`}
-            pinColor="#F59E0B"
-           />
-          ))}
-         </MapView>
-        </View>
-       ) : (
-        <Text allowFontScaling={false} style={styles.mutedText}>
-         Route coordinates are not available for this log.
-        </Text>
-       )}
-
-       <View style={styles.routeDetails}>
-        <Text allowFontScaling={false} style={styles.detailValue}>
-         <Text allowFontScaling={false} style={styles.detailLabel}>
-          From:{' '}
-         </Text>
-         {log.fromLocation || 'Not available'}
-        </Text>
-        {fromCoords && (
-         <Text allowFontScaling={false} style={styles.coordinateText}>
-          Lat {fromCoords.latitude.toFixed(6)} · Long{' '}
-          {fromCoords.longitude.toFixed(6)}
-         </Text>
-        )}
-        <Text allowFontScaling={false} style={styles.detailValue}>
-         <Text allowFontScaling={false} style={styles.detailLabel}>
-          To:{' '}
-         </Text>
-         {log.toLocation || 'Not available'}
-        </Text>
-        {toCoords && (
-         <Text allowFontScaling={false} style={styles.coordinateText}>
-          Lat {toCoords.latitude.toFixed(6)} · Long{' '}
-          {toCoords.longitude.toFixed(6)}
-         </Text>
-        )}
-        <View style={styles.routeMetricRow}>
-         <View style={styles.routeMetric}>
-          <Text allowFontScaling={false} style={styles.timeLabel}>
-           Distance
-          </Text>
-          <Text allowFontScaling={false} style={styles.timeValue}>
-           {formatDistance(log.routeDistanceMeters)}
-          </Text>
-         </View>
-         <View style={styles.routeMetric}>
-          <Text allowFontScaling={false} style={styles.timeLabel}>
-           Travel Time
-          </Text>
-          <Text allowFontScaling={false} style={styles.timeValue}>
-           {formatRouteDuration(log.routeDurationSeconds)}
-          </Text>
-         </View>
-        </View>
-        {log.routeSummary ? (
-         <Text allowFontScaling={false} style={styles.notesContent}>
-          {log.routeSummary}
-         </Text>
-        ) : null}
-       </View>
+    {/* Project Card */}
+    <AnimatedCard delay={200} style={styles.infoCard}>
+     <View style={styles.cardHeader}>
+      <View
+       style={[styles.cardIconBox, {backgroundColor: 'rgba(99,102,241,0.1)'}]}>
+       <Feather name="briefcase" size={18} color="#6366F1" />
       </View>
-     )}
-
-     <View style={styles.detailCard}>
-      <View style={styles.cardHeader}>
-       <Text allowFontScaling={false} style={styles.cardIcon}>
-        ⏰
-       </Text>
-       <Text allowFontScaling={false} style={styles.cardTitle}>
-        Time Details
-       </Text>
-      </View>
-      <View style={styles.timeGrid}>
-       <View style={styles.timeItem}>
-        <Text allowFontScaling={false} style={styles.timeLabel}>
-         Start Time
-        </Text>
-        <Text allowFontScaling={false} style={styles.timeValue}>
-         {log.startTime}
-        </Text>
-       </View>
-       <View style={styles.timeItem}>
-        <Text allowFontScaling={false} style={styles.timeLabel}>
-         End Time
-        </Text>
-        <Text allowFontScaling={false} style={styles.timeValue}>
-         {log.endTime}
-        </Text>
-       </View>
-       <View style={styles.timeItem}>
-        <Text allowFontScaling={false} style={styles.timeLabel}>
-         Duration
-        </Text>
-        <Text allowFontScaling={false} style={styles.timeValue}>
-         {duration}
-        </Text>
-       </View>
-      </View>
+      <Text style={styles.cardTitle}>Project Information</Text>
      </View>
-
-     <View style={styles.detailCard}>
-      <View style={styles.cardHeader}>
-       <Text allowFontScaling={false} style={styles.cardIcon}>
-        🏢
-       </Text>
-       <Text allowFontScaling={false} style={styles.cardTitle}>
-        Project & Task
+     <View style={styles.projectInfo}>
+      <Text style={styles.infoLabel}>PROJECT NAME</Text>
+      <Text style={styles.infoValue}>{log.projectName}</Text>
+      <View style={styles.divider} />
+      <Text style={styles.infoLabel}>BILLABLE STATUS</Text>
+      <View
+       style={[
+        styles.projectBillableBadge,
+        {
+         backgroundColor: billableHighlightColor + '1A',
+         borderColor: billableHighlightColor + '66',
+        },
+       ]}>
+       <Feather
+        name={isBillable ? 'check-circle' : 'slash'}
+        size={14}
+        color={billableHighlightColor}
+       />
+       <Text
+        style={[styles.projectBillableText, {color: billableHighlightColor}]}>
+        {billableLabel}
        </Text>
       </View>
-      <Text allowFontScaling={false} style={styles.detailValue}>
-       <Text allowFontScaling={false} style={styles.detailLabel}>
-        Project:{' '}
-       </Text>
-       {log.projectName}
-      </Text>
       {log.taskName && (
-       <Text allowFontScaling={false} style={styles.detailValue}>
-        <Text allowFontScaling={false} style={styles.detailLabel}>
-         Task:{' '}
-        </Text>
-        {log.taskName}
-       </Text>
+       <>
+        <View style={styles.divider} />
+        <Text style={styles.infoLabel}>DESCRIPTION</Text>
+        <Text style={styles.infoValue}>{log.taskName}</Text>
+       </>
       )}
      </View>
+    </AnimatedCard>
 
-     <View style={styles.detailCard}>
-      <View style={styles.cardHeader}>
-       <Text allowFontScaling={false} style={styles.cardIcon}>
-        📋
-       </Text>
-       <Text allowFontScaling={false} style={styles.cardTitle}>
-        Details
-       </Text>
+    {/* Time Card */}
+    <AnimatedCard delay={300} style={styles.infoCard}>
+     <View style={styles.cardHeader}>
+      <View
+       style={[styles.cardIconBox, {backgroundColor: 'rgba(245,158,11,0.1)'}]}>
+       <Feather name="clock" size={18} color="#F59E0B" />
       </View>
-      <View style={styles.detailGrid}>
-       <Text allowFontScaling={false} style={styles.detailValue}>
-        <Text allowFontScaling={false} style={styles.detailLabel}>
-         Category:{' '}
-        </Text>
-        {log.category}
-       </Text>
-       <Text allowFontScaling={false} style={styles.detailValue}>
-        <Text allowFontScaling={false} style={styles.detailLabel}>
-         Billable:{' '}
-        </Text>
-        {log.billable ? 'Yes' : 'No'}
-       </Text>
+      <Text style={styles.cardTitle}>Time Range</Text>
+     </View>
+     <View style={styles.timeGrid}>
+      <View style={styles.timeItem}>
+       <Text style={styles.timeLabel}>START</Text>
+       <Text style={styles.timeDateValue}>{startDateTime.date}</Text>
+       <Text style={styles.timeValue}>{startDateTime.time}</Text>
+      </View>
+      <View style={styles.timeConnector}>
+       <Feather name="arrow-right" size={16} color={theme.colors.muted} />
+      </View>
+      <View style={styles.timeItem}>
+       <Text style={styles.timeLabel}>END</Text>
+       <Text style={styles.timeDateValue}>{endDateTime.date}</Text>
+       <Text style={styles.timeValue}>{endDateTime.time}</Text>
       </View>
      </View>
+    </AnimatedCard>
 
-     {log.notes && (
-      <View style={styles.detailCard}>
-       <View style={styles.cardHeader}>
-        <Text allowFontScaling={false} style={styles.cardIcon}>
-         📝
-        </Text>
-        <Text allowFontScaling={false} style={styles.cardTitle}>
-         Notes
-        </Text>
+    {/* Map Section if available */}
+    {hasMap && (
+     <AnimatedCard delay={400} style={styles.mapCard}>
+      <View style={styles.cardHeader}>
+       <View
+        style={[styles.cardIconBox, {backgroundColor: 'rgba(16,185,129,0.1)'}]}>
+        <Feather name="map" size={18} color="#10B981" />
        </View>
-       <Text allowFontScaling={false} style={styles.notesContent}>
-        {log.notes}
-       </Text>
+       <Text style={styles.cardTitle}>Travel Route</Text>
       </View>
-     )}
-    </View>
+      <View style={styles.mapWrap}>
+       <MapView
+        provider={PROVIDER_GOOGLE}
+        style={styles.map}
+        initialRegion={mapRegion}
+        region={mapRegion}
+        scrollEnabled={true}
+        zoomEnabled={true}
+        pitchEnabled={false}
+        rotateEnabled={false}>
+        {routePoints.length > 1 && (
+         <Polyline
+          coordinates={routePoints}
+          strokeColor={theme.colors.primary}
+          strokeWidth={4}
+         />
+        )}
+        {fromCoords && (
+         <Marker coordinate={fromCoords} title="From" pinColor="#3B82F6" />
+        )}
+        {toCoords && (
+         <Marker coordinate={toCoords} title="To" pinColor="#EF4444" />
+        )}
+       </MapView>
+      </View>
+      <View style={styles.locationDetails}>
+       <View style={styles.locationItem}>
+        <View style={[styles.dot, {backgroundColor: '#3B82F6'}]} />
+        <View style={styles.locationTextContainer}>
+         <Text style={styles.infoLabel}>FROM</Text>
+         <Text style={styles.locationText}>
+          {log.fromLocation || 'Unknown Location'}
+         </Text>
+        </View>
+       </View>
+       <View style={styles.locationItem}>
+        <View style={[styles.dot, {backgroundColor: '#EF4444'}]} />
+        <View style={styles.locationTextContainer}>
+         <Text style={styles.infoLabel}>TO</Text>
+         <Text style={styles.locationText}>
+          {log.toLocation || 'Unknown Location'}
+         </Text>
+        </View>
+       </View>
+       <View style={styles.routeMetricRow}>
+        <View style={styles.routeMetric}>
+         <Feather name="activity" size={14} color={theme.colors.muted} />
+         <Text style={styles.routeMetricText}>
+          {formatDistance(log.routeDistanceMeters)}
+         </Text>
+        </View>
+       </View>
+      </View>
+     </AnimatedCard>
+    )}
+
+    {/* Notes Card */}
+    {cleanNotes ? (
+     <AnimatedCard delay={500} style={styles.infoCard}>
+      <View style={styles.cardHeader}>
+       <View
+        style={[styles.cardIconBox, {backgroundColor: 'rgba(16,185,129,0.1)'}]}>
+        <Feather name="edit-3" size={18} color="#10B981" />
+       </View>
+       <Text style={styles.cardTitle}>Notes & Agenda</Text>
+      </View>
+      <View style={styles.notesContainer}>
+       <Text style={styles.notesText}>{cleanNotes}</Text>
+      </View>
+     </AnimatedCard>
+    ) : null}
+
+    {/* Footer info */}
    </ScrollView>
   </SafeAreaView>
  );
@@ -435,7 +525,9 @@ export const LogDetailScreen = () => {
 
 const createStyles = (theme: AppTheme) => {
  const borderColor = theme.colors.border;
- const inputBg = 'rgba(255,255,255,0.02)';
+ const glassCard = theme.colors.card;
+ const glassSurface = theme.colors.surface;
+ const muted = theme.colors.muted;
 
  return StyleSheet.create({
   safe: {
@@ -448,175 +540,315 @@ const createStyles = (theme: AppTheme) => {
   },
   scrollContent: {
    paddingHorizontal: 16,
-   paddingBottom: 28,
+   paddingBottom: 40,
   },
   center: {
    flex: 1,
    justifyContent: 'center',
    alignItems: 'center',
+   padding: 20,
   },
   errorText: {
-   color: theme.colors.muted,
+   marginTop: 16,
+   color: theme.colors.text,
+   fontSize: 18,
+   fontWeight: '700',
+  },
+  backButton: {
+   marginTop: 24,
+   paddingHorizontal: 30,
+   paddingVertical: 12,
+   backgroundColor: theme.colors.primary,
+   borderRadius: 12,
+  },
+  backButtonText: {
+   color: '#FFF',
    fontSize: 16,
-   fontWeight: '600',
+   fontWeight: '700',
   },
   heroSection: {
-   marginTop: 16,
-   marginBottom: 24,
+   marginTop: 20,
+   marginBottom: 20,
+   borderRadius: 28,
+   overflow: 'hidden',
+   borderWidth: 1,
+   borderColor: 'rgba(255,255,255,0.12)',
+   backgroundColor: 'rgba(255,255,255,0.03)',
   },
   heroGradient: {
-   borderRadius: 16,
-   padding: 20,
-   flexDirection: 'row',
-   alignItems: 'center',
+   padding: 24,
+   borderRadius: 28,
   },
-  heroIcon: {
-   width: 60,
-   height: 60,
-   borderRadius: 30,
-   backgroundColor: 'rgba(255,255,255,0.2)',
+  heroGlow: {
+   position: 'absolute',
+   top: -100,
+   right: -100,
+   width: 250,
+   height: 250,
+   borderRadius: 125,
+   backgroundColor: 'rgba(255,255,255,0.03)',
+   filter: 'blur(50px)',
+  },
+  heroHeader: {
+   flexDirection: 'row',
+   justifyContent: 'space-between',
+   alignItems: 'flex-start',
+   marginBottom: 20,
+  },
+  categoryIconContainer: {
+   width: 52,
+   height: 52,
+   borderRadius: 18,
+   backgroundColor: 'rgba(255,255,255,0.08)',
    alignItems: 'center',
    justifyContent: 'center',
-   marginRight: 16,
+   borderWidth: 1,
+   borderColor: 'rgba(255,255,255,0.15)',
   },
-  heroIconText: {
-   color: '#fff',
-   fontSize: 24,
+  statusBadge: {
+   flexDirection: 'row',
+   alignItems: 'center',
+   paddingHorizontal: 12,
+   paddingVertical: 6,
+   borderRadius: 12,
+   gap: 6,
+   backgroundColor: 'rgba(255,255,255,0.08)',
+   borderWidth: 1,
+   borderColor: 'rgba(255,255,255,0.1)',
+  },
+  statusBadgeText: {
+   color: '#FFF',
+   fontSize: 11,
    fontWeight: '800',
-  },
-  heroContent: {
-   flex: 1,
+   letterSpacing: 0.5,
   },
   heroTitle: {
-   fontSize: 22,
+   fontSize: 28,
    fontWeight: '800',
-   color: '#fff',
+   color: '#FFF',
    marginBottom: 4,
+   letterSpacing: -0.5,
   },
   heroSubtitle: {
    fontSize: 14,
-   color: 'rgba(255,255,255,0.9)',
+   color: 'rgba(255,255,255,0.6)',
    fontWeight: '600',
-   marginBottom: 8,
+   marginBottom: 24,
   },
-  statusBadge: {
-   alignSelf: 'flex-start',
-   paddingHorizontal: 10,
-   paddingVertical: 4,
-   borderRadius: 12,
-  },
-  statusBadgeText: {
-   color: '#fff',
-   fontSize: 10,
-   fontWeight: '700',
-  },
-  detailContainer: {
-   gap: 16,
-  },
-  detailCard: {
-   borderWidth: 1,
-   borderColor,
-   backgroundColor: inputBg,
-   borderRadius: 12,
-   padding: 16,
-   shadowColor: '#000',
-   shadowOffset: {width: 0, height: 2},
-   shadowOpacity: 0.1,
-   shadowRadius: 4,
-   //    elevation: 3,
-  },
-  mapWrap: {
-   height: 220,
-   borderRadius: 12,
-   overflow: 'hidden',
-   borderWidth: 1,
-   borderColor,
-   marginBottom: 14,
-   backgroundColor: theme.colors.surface,
-  },
-  map: {
-   flex: 1,
-  },
-  routeDetails: {
-   gap: 6,
-  },
-  routeMetricRow: {
+  heroStatsRow: {
    flexDirection: 'row',
+   alignItems: 'center',
+   backgroundColor: 'rgba(255,255,255,0.06)',
+   borderRadius: 20,
+   padding: 16,
    gap: 12,
-   marginVertical: 8,
   },
-  routeMetric: {
+  heroStatItem: {
    flex: 1,
+  },
+  heroStatLabel: {
+   fontSize: 10,
+   color: 'rgba(255,255,255,0.5)',
+   fontWeight: '700',
+   textTransform: 'uppercase',
+   letterSpacing: 1,
+   marginBottom: 4,
+  },
+  heroStatValue: {
+   fontSize: 16,
+   color: '#FFF',
+   fontWeight: '800',
+  },
+  heroStatDivider: {
+   width: 1,
+   height: 30,
+   backgroundColor: 'rgba(255,255,255,0.1)',
+   marginHorizontal: 4,
+  },
+  billableBadgeContainer: {
+   flexDirection: 'row',
+   alignItems: 'center',
+  },
+  infoCard: {
+   backgroundColor: 'rgba(255,255,255,0.04)',
+   borderRadius: 24,
+   padding: 20,
+   marginBottom: 16,
    borderWidth: 1,
-   borderColor,
-   borderRadius: 10,
-   padding: 12,
-   backgroundColor: theme.colors.surface,
-  },
-  coordinateText: {
-   color: theme.colors.muted,
-   fontSize: 12,
-   fontWeight: '600',
-   marginTop: -4,
-   marginBottom: 8,
-  },
-  mutedText: {
-   color: theme.colors.muted,
-   fontSize: 13,
-   fontWeight: '600',
-   marginBottom: 12,
+   borderColor: 'rgba(255,255,255,0.08)',
   },
   cardHeader: {
    flexDirection: 'row',
    alignItems: 'center',
-   marginBottom: 12,
+   gap: 12,
+   marginBottom: 20,
   },
-  cardIcon: {
-   fontSize: 18,
-   marginRight: 8,
+  cardIconBox: {
+   width: 40,
+   height: 40,
+   borderRadius: 14,
+   alignItems: 'center',
+   justifyContent: 'center',
   },
   cardTitle: {
    fontSize: 16,
-   fontWeight: '700',
+   fontWeight: '800',
    color: theme.colors.text,
+   letterSpacing: -0.3,
+  },
+  projectInfo: {
+   gap: 4,
+  },
+  infoLabel: {
+   fontSize: 11,
+   color: muted,
+   fontWeight: '800',
+   letterSpacing: 0.5,
+  },
+  infoValue: {
+   fontSize: 16,
+   color: theme.colors.text,
+   fontWeight: '700',
+   marginBottom: 4,
+  },
+  projectBillableBadge: {
+   alignSelf: 'flex-start',
+   flexDirection: 'row',
+   alignItems: 'center',
+   gap: 8,
+   borderWidth: 1,
+   borderRadius: 12,
+   paddingHorizontal: 12,
+   paddingVertical: 7,
+   marginTop: 4,
+  },
+  projectBillableText: {
+   fontSize: 13,
+   fontWeight: '800',
+  },
+  divider: {
+   height: 1,
+   backgroundColor: borderColor,
+   marginVertical: 12,
   },
   timeGrid: {
    flexDirection: 'row',
+   alignItems: 'center',
    justifyContent: 'space-between',
+   paddingHorizontal: 10,
   },
   timeItem: {
    alignItems: 'center',
    flex: 1,
   },
   timeLabel: {
-   fontSize: 12,
-   color: theme.colors.muted,
-   fontWeight: '600',
-   marginBottom: 4,
+   fontSize: 10,
+   color: muted,
+   fontWeight: '800',
+   marginBottom: 6,
   },
   timeValue: {
-   fontSize: 16,
+   fontSize: 18,
    color: theme.colors.text,
-   fontWeight: '700',
+   fontWeight: '800',
+   textAlign: 'center',
   },
-  detailValue: {
+  timeDateValue: {
+   fontSize: 12,
+   color: muted,
+   fontWeight: '700',
+   textAlign: 'center',
+   marginBottom: 4,
+  },
+  timeConnector: {
+   paddingHorizontal: 12,
+  },
+  mapCard: {
+   backgroundColor: glassCard,
+   borderRadius: 20,
+   padding: 20,
+   marginBottom: 16,
+   borderWidth: 1,
+   borderColor,
+  },
+  mapWrap: {
+   height: 200,
+   borderRadius: 16,
+   overflow: 'hidden',
+   marginBottom: 16,
+   borderWidth: 1,
+   borderColor,
+  },
+  map: {
+   flex: 1,
+  },
+  locationDetails: {
+   gap: 14,
+  },
+  locationItem: {
+   flexDirection: 'row',
+   alignItems: 'flex-start',
+   gap: 12,
+  },
+  dot: {
+   width: 10,
+   height: 10,
+   borderRadius: 5,
+   marginTop: 14,
+  },
+  locationTextContainer: {
+   flex: 1,
+  },
+  locationText: {
    fontSize: 14,
    color: theme.colors.text,
    fontWeight: '600',
-   marginBottom: 8,
+   lineHeight: 20,
   },
-  detailLabel: {
-   fontWeight: '700',
-   color: theme.colors.muted,
-  },
-  detailGrid: {
+  routeMetricRow: {
    flexDirection: 'row',
-   justifyContent: 'space-between',
+   marginTop: 4,
+   paddingLeft: 22,
   },
-  notesContent: {
+  routeMetric: {
+   flexDirection: 'row',
+   alignItems: 'center',
+   gap: 6,
+   backgroundColor: glassSurface,
+   paddingHorizontal: 10,
+   paddingVertical: 4,
+   borderRadius: 8,
+  },
+  routeMetricText: {
+   fontSize: 12,
+   color: muted,
+   fontWeight: '700',
+  },
+  notesContainer: {
+   backgroundColor: glassSurface,
+   borderRadius: 12,
+   padding: 14,
+   borderWidth: 1,
+   borderColor,
+  },
+  notesText: {
    fontSize: 14,
    color: theme.colors.text,
-   lineHeight: 20,
+   lineHeight: 22,
+   fontWeight: '500',
+  },
+  footer: {
+   flexDirection: 'row',
+   alignItems: 'center',
+   justifyContent: 'center',
+   gap: 8,
+   marginTop: 8,
+   marginBottom: 20,
+  },
+  footerText: {
+   fontSize: 12,
+   color: muted,
+   fontWeight: '600',
   },
  });
 };

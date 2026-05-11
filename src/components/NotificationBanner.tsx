@@ -156,7 +156,7 @@ const createStyles = (theme: AppTheme) =>
    borderRadius: 18,
    borderWidth: 1,
    // padding: 16,
-   height: moderateScale(110),
+   minHeight: moderateScale(110),
    flexDirection: 'row',
    gap: 12,
    shadowColor: theme.colors.shadow,
@@ -195,12 +195,12 @@ const createStyles = (theme: AppTheme) =>
   },
   actionButton: {
    borderRadius: 999,
-   paddingHorizontal: 16,
-   paddingVertical: 8,
+   paddingHorizontal: 12,
+   paddingVertical: 6,
   },
   actionLabel: {
    fontWeight: '700',
-   fontSize: 12,
-   letterSpacing: 0.2,
+   fontSize: 10,
+   letterSpacing: 0.1,
   },
  });

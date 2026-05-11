@@ -38,6 +38,7 @@ export const ProfileScreen = () => {
  const authUser = useAppSelector(state => state.auth.user);
  const loginData = useAppSelector(state => state.auth.loginData);
  const token = useAppSelector(state => state.auth.token);
+ const homeData = useAppSelector(state => state.home.data);
 
  const [battery, setBattery] = useState(0);
  const [network, setNetwork] = useState('Checking...');
@@ -122,26 +123,22 @@ export const ProfileScreen = () => {
   }
 
   setIsLoggingOut(true);
+  let willNavigateAway = false;
 
   try {
    const result = await logoutRequest(token);
 
    if (result.success) {
+    willNavigateAway = true;
     showDialog({
      title: 'Logged Out',
      message: result.message || 'You have been logged out successfully.',
      variant: 'success',
-     // Prevent accidental backdrop tap during the navigation transition
      dismissOnBackdrop: false,
      primaryAction: {
       label: 'Okay',
       onPress: () => {
-       // Delay dispatch so the Modal fully closes before navigation
-       // switches to LoginScreen. Without this, iOS crashes because
-       // the navigation tree is torn down while the Modal is still mounted.
-       setTimeout(() => {
-        dispatch(logout());
-       }, 400);
+       dispatch(logout());
       },
      },
     });
@@ -155,7 +152,6 @@ export const ProfileScreen = () => {
    }
   } catch (error) {
    console.error('Error logging out:', error);
-   // Even if the API call fails, let the user force-logout locally
    showDialog({
     title: 'Network Error',
     message:
@@ -165,15 +161,16 @@ export const ProfileScreen = () => {
     primaryAction: {
      label: 'Force Logout',
      onPress: () => {
-      setTimeout(() => {
-       dispatch(logout());
-      }, 400);
+      willNavigateAway = true;
+      dispatch(logout());
      },
     },
     secondaryAction: {label: 'Cancel'},
    });
   } finally {
-   setIsLoggingOut(false);
+   if (!willNavigateAway) {
+    setIsLoggingOut(false);
+   }
   }
  };
 
@@ -305,6 +302,15 @@ export const ProfileScreen = () => {
  };
 
  const getAttendanceData = (): {present: string; percentage: string} => {
+  // Try homeData first
+  if (homeData) {
+    const present = homeData.attendance_present || homeData.present_days;
+    const percentage = homeData.attendance_percentage || homeData.present_percentage;
+    if (present && percentage) {
+      return {present: String(present), percentage: String(percentage)};
+    }
+  }
+
   if (!loginData) return {present: '22/23', percentage: '95.6%'};
 
   const present =
@@ -325,6 +331,15 @@ export const ProfileScreen = () => {
  };
 
  const getHoursLogged = (): {hours: string; overtime: string} => {
+  // Try homeData first
+  if (homeData) {
+    const hours = homeData.hours_logged || homeData.total_hours;
+    const overtime = homeData.overtime_hours || homeData.extra_hours;
+    if (hours && overtime) {
+      return {hours: String(hours), overtime: String(overtime)};
+    }
+  }
+
   if (!loginData) return {hours: '176.5h', overtime: '+8.5h'};
 
   const hours =
@@ -342,6 +357,15 @@ export const ProfileScreen = () => {
  };
 
  const getLogsCreated = (): {count: string; status: string} => {
+  // Try homeData first
+  if (homeData) {
+    const count = homeData.logs_count || homeData.total_logs;
+    const status = homeData.logs_status || homeData.verification_status;
+    if (count && status) {
+      return {count: String(count), status: String(status)};
+    }
+  }
+
   if (!loginData) return {count: '48', status: 'All verified'};
 
   const count =
@@ -623,33 +647,6 @@ export const ProfileScreen = () => {
      </View>
     </AnimatedCard>
 
-    <TouchableOpacity
-     activeOpacity={0.9}
-     style={styles.reportsButton}
-     onPress={() => navigation.navigate('ReportList' as never)}>
-     <LinearGradient
-      colors={theme.gradients.button}
-      start={{x: 0, y: 0}}
-      end={{x: 1, y: 1}}
-      style={styles.reportsGradient}>
-      <View style={styles.reportsInner}>
-       <View style={styles.reportsIconWrap}>
-        <Feather name="list" size={18} color="#FFFFFF" />
-       </View>
-       <View style={styles.reportsContent}>
-        <Text allowFontScaling={false} style={styles.reportsText}>
-         View Report History
-        </Text>
-        <Text allowFontScaling={false} style={styles.reportsMeta}>
-         All your submitted reports
-        </Text>
-       </View>
-       <View style={styles.reportsArrow}>
-        <Feather name="arrow-up-right" size={16} color="#FFFFFF" />
-       </View>
-      </View>
-     </LinearGradient>
-    </TouchableOpacity>
 
     <TouchableOpacity
      activeOpacity={0.9}
@@ -667,7 +664,7 @@ export const ProfileScreen = () => {
       style={styles.signOutGradient}>
       <View style={styles.signOutIconWrap}>
        {isLoggingOut ? (
-        <ActivityIndicator size="small" color={theme.colors.primary} />
+        <ActivityIndicator key="profile-loading" size="small" color={theme.colors.primary} />
        ) : (
         <Feather name="log-out" size={18} color={theme.colors.primary} />
        )}

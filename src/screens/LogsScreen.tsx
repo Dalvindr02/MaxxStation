@@ -29,6 +29,7 @@ import {useDialog} from '../context/DialogContext';
 import {
  createManualLogRequest,
  deleteManualLogRequest,
+ updateManualLogRequest,
 } from '../services/manualLogService';
 import {minutesToHours, parseTimeToMinutes} from '../utils/time';
 import {AppTheme} from '../theme';
@@ -86,6 +87,29 @@ const formatDateKey = (date: Date) => {
  return `${yyyy}-${mm}-${dd}`;
 };
 
+const parseBillableStatus = (value: unknown): boolean => {
+ if (typeof value === 'boolean') {
+  return value;
+ }
+ if (typeof value === 'number') {
+  return value === 1;
+ }
+ if (typeof value === 'string') {
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'billable', 'is_billable'].includes(normalized)) {
+   return true;
+  }
+  if (
+   ['0', 'false', 'no', 'non-billable', 'non_billable', 'non billable'].includes(
+    normalized,
+   )
+  ) {
+   return false;
+  }
+ }
+ return false;
+};
+
 const sanitizeLogEntry = (log: unknown, index: number): LogEntry | null => {
  if (!log || typeof log !== 'object') {
   return null;
@@ -133,7 +157,7 @@ const sanitizeLogEntry = (log: unknown, index: number): LogEntry | null => {
     ? row.category.trim()
     : 'Meeting',
   notes: typeof row.notes === 'string' ? row.notes : '',
-  billable: Boolean(row.billable),
+  billable: parseBillableStatus(row.billable),
   status:
    row.status === 'approved' ||
    row.status === 'rejected' ||
@@ -160,7 +184,7 @@ export const LogsScreen = () => {
  const dispatch = useAppDispatch();
  const navigation = useNavigation<any>();
  const {showDialog} = useDialog();
- const {startEditing} = useLogs();
+ const {editingLog, startEditing, clearEditing} = useLogs();
  const reduxLogs = useAppSelector(state =>
   Array.isArray(state.logs.logs) ? state.logs.logs : [],
  );
@@ -260,6 +284,26 @@ export const LogsScreen = () => {
   }
  }, [selectedProject, selectedTaskId]);
 
+  useEffect(() => {
+    if (editingLog) {
+      // Find project
+      const project = projects.find(p => p.id === String(editingLog.projectId));
+      if (project) {
+        dispatch(setSelectedProject(project.id));
+      }
+      
+      // Set other fields
+      setStartDate(new Date(editingLog.date));
+      setEndDate(new Date(editingLog.date));
+      setStartTime(editingLog.startTime);
+      setEndTime(editingLog.endTime);
+      setCategory(editingLog.category);
+      setNotes(editingLog.notes);
+      setBillable(editingLog.billable);
+      setSelectedTaskId(editingLog.taskId);
+    }
+  }, [editingLog, projects, dispatch]);
+
  const saveManualLog = async () => {
   if (!selectedProject) {
    showDialog({
@@ -313,18 +357,29 @@ export const LogsScreen = () => {
   };
 
   try {
-   setIsSavingLog(true);
-   const result = await createManualLogRequest(payload, authToken);
-   await dispatch(fetchLogs()).unwrap();
-   // Guard: screen may have been unmounted while request was in-flight
-   if (!isMounted.current) return;
-   showDialog({
-    title: 'Log created',
-    message: result.message || 'Manual log created successfully.',
-    variant: 'success',
-    primaryAction: {label: 'OK'},
-   });
-   setNotes('Manual log entry');
+    setIsSavingLog(true);
+    let result;
+    if (editingLog) {
+      result = await updateManualLogRequest(editingLog.id, payload, authToken);
+    } else {
+      result = await createManualLogRequest(payload, authToken);
+    }
+    
+    await dispatch(fetchLogs()).unwrap();
+    // Guard: screen may have been unmounted while request was in-flight
+    if (!isMounted.current) return;
+    
+    showDialog({
+      title: editingLog ? 'Log updated' : 'Log created',
+      message: result.message || (editingLog ? 'Manual log updated successfully.' : 'Manual log created successfully.'),
+      variant: 'success',
+      primaryAction: {label: 'OK'},
+    });
+    
+    if (editingLog) {
+      clearEditing();
+    }
+    setNotes('Manual log entry');
   } catch (error) {
    if (!isMounted.current) return;
    showDialog({
@@ -338,6 +393,34 @@ export const LogsScreen = () => {
    if (isMounted.current) setIsSavingLog(false);
   }
  };
+
+  const resetLogForm = () => {
+    setStartDate(new Date());
+    setEndDate(new Date());
+    setStartTime('09:00');
+    setEndTime('10:00');
+    setCategory('Meeting');
+    setNotes('Manual log entry');
+    setBillable(true);
+    clearEditing();
+  };
+
+  const handleDiscardEdit = () => {
+    if (!editingLog) return;
+    
+    showDialog({
+      title: 'Discard changes?',
+      message: 'Your manual log edits will be lost and the form will return to Add mode.',
+      variant: 'warning',
+      primaryAction: {
+        label: 'Discard',
+        onPress: () => {
+          resetLogForm();
+        },
+      },
+      secondaryAction: {label: 'Keep editing'},
+    });
+  };
 
  const handleEdit = (log: LogEntry) => {
   startEditing(log);
@@ -453,10 +536,12 @@ export const LogsScreen = () => {
    <ScrollView
     showsVerticalScrollIndicator={false}
     contentContainerStyle={styles.scrollContent}>
-    <View style={styles.formCard}>
-     <Text allowFontScaling={false} style={styles.formTitle}>
-      Add Manual Log
-     </Text>
+     <View style={styles.formCard}>
+      <View style={styles.formHeader}>
+        <Text allowFontScaling={false} style={styles.formTitle}>
+          {editingLog ? 'Edit Manual Log' : 'Add Manual Log'}
+        </Text>
+      </View>
      <Text allowFontScaling={false} style={styles.inputHeading}>
       Select Project
      </Text>
@@ -581,14 +666,25 @@ export const LogsScreen = () => {
       style={styles.notesInput}
       multiline
      />
-     <ActionButton
-      style={[styles.saveButton, isSavingLog && styles.saveButtonDisabled]}
-      onPress={saveManualLog}
-      disabled={isSavingLog}
-      icon={isSavingLog ? 'loader' : 'save'}
-      label={isSavingLog ? 'Saving...' : 'Save Manual Log'}
-      subtitle="Save with the same expense gradient style"
-     />
+      <ActionButton
+       style={[styles.saveButton, isSavingLog && styles.saveButtonDisabled]}
+       onPress={saveManualLog}
+       disabled={isSavingLog}
+       icon={isSavingLog ? 'loader' : 'save'}
+       label={isSavingLog ? 'Saving...' : editingLog ? 'Update Log' : 'Save Manual Log'}
+       subtitle={editingLog ? 'Save your changes to this log' : 'Save with the same expense gradient style'}
+      />
+      {editingLog ? (
+       <TouchableOpacity
+        activeOpacity={0.85}
+        onPress={handleDiscardEdit}
+        style={styles.discardEditButton}>
+        <Feather name="x-circle" size={14} color={theme.colors.warning} />
+        <Text allowFontScaling={false} style={styles.discardEditText}>
+         Discard Edit
+        </Text>
+       </TouchableOpacity>
+      ) : null}
     </View>
 
     <View style={styles.logsHeader}>
@@ -821,17 +917,20 @@ const createStyles = (theme: AppTheme) => {
    paddingHorizontal: 12,
    backgroundColor: theme.colors.card,
   },
-  taskDropdownMenu: {
-   borderRadius: 12,
-   borderWidth: 1,
-   borderColor: borderColor,
-   backgroundColor: theme.colors.card,
-   overflow: 'hidden',
-  },
-  taskDropdownItem: {
-   minHeight: 42,
-   justifyContent: 'center',
-  },
+   taskDropdownMenu: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: borderColor,
+    backgroundColor: '#1A0E2A', // Solid dark background from theme
+    overflow: 'hidden',
+    marginTop: -4,
+   },
+   taskDropdownItem: {
+    minHeight: 48, // Slightly taller for better touch targets
+    justifyContent: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+   },
   taskDropdownItemText: {
    color: theme.colors.text,
    fontSize: 13,
@@ -1109,10 +1208,27 @@ const createStyles = (theme: AppTheme) => {
    fontWeight: '600',
    color: theme.colors.primary,
   },
-  deleteActionText: {
-   fontSize: 12,
-   fontWeight: '600',
-   color: theme.colors.danger,
-  },
- });
+   deleteActionText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: theme.colors.danger,
+   },
+   discardEditButton: {
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 216, 107, 0.4)',
+    backgroundColor: 'rgba(255, 216, 107, 0.12)',
+    borderRadius: 14,
+    height: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+   },
+   discardEditText: {
+    color: theme.colors.warning,
+    fontSize: 13,
+    fontWeight: '700',
+   },
+  });
 };

@@ -6,7 +6,7 @@
   "android": "react-native run-android",
   "ios": "react-native run-ios",
   "lint": "eslint .",
-  "clear": "cd android && ./gradlew clean && cd ..",
+  "clear": "rm -rf android/app/.cxx android/.gradle && cd android && ./gradlew clean && cd ..",
   "build-android": "cd android && ./gradlew assembleDebug && cd ..",
   "build-font": "react-native bundle --platform android --dev false --entry-file index.js --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res/",
   "start": "react-native start",

@@ -44,7 +44,6 @@ import {
  syncAttendanceNotifications,
 } from '../services/notificationService';
 import {LocationStatus} from '../types/attendance';
-import {ManualLogModal} from '../components/ManualLogModal';
 import {useAppSelector} from '../store/hooks';
 const formatNow = (baseDate?: Date) => {
  const now = baseDate ?? new Date();
@@ -149,7 +148,6 @@ export default function AttendanceScreen() {
  const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
  const [locationError, setLocationError] = useState<string | null>(null);
  const [isRefreshingLocation, setIsRefreshingLocation] = useState(false);
- const [isManualLogModalVisible, setIsManualLogModalVisible] = useState(false);
  const isMounted = useRef(true);
 
  // Redux selectors
@@ -184,22 +182,6 @@ export default function AttendanceScreen() {
  const [isMapModalVisible, setIsMapModalVisible] = useState(false);
  const handleOpenMapModal = useCallback(() => setIsMapModalVisible(true), []);
  const handleCloseMapModal = useCallback(() => setIsMapModalVisible(false), []);
- const handleOpenManualLogModal = useCallback(
-  () => setIsManualLogModalVisible(true),
-  [],
- );
- const handleCloseManualLogModal = useCallback(
-  () => setIsManualLogModalVisible(false),
-  [],
- );
- const handleManualLogSaved = useCallback(() => {
-  showDialog({
-   title: 'Travel log saved',
-   message: 'Your manual travel log has been saved successfully.',
-   variant: 'success',
-   primaryAction: {label: 'Okay'},
-  });
- }, [showDialog]);
  const shiftStartMinutes = parseTimeToMinutes(SHIFT_WINDOW.start) ?? 540;
  const shiftEndMinutes = parseTimeToMinutes(SHIFT_WINDOW.end) ?? 1080;
  const hasMarkedIn = Boolean(todayEntry?.clockIn);
@@ -381,19 +363,15 @@ export default function AttendanceScreen() {
   setTravelPromptDismissed(true);
   navigation.navigate('AttendanceTravel', {
    mode: 'billable',
-   fromCoords: currentCoords ?? WORK_LOCATION,
-   toCoords: currentCoords,
-  });
- }, [currentCoords, navigation]);
+  } as never);
+ }, [navigation]);
 
  const handleStartManualTravel = useCallback(() => {
   setTravelPromptDismissed(true);
   navigation.navigate('AttendanceTravel', {
    mode: 'manual',
-   fromCoords: currentCoords ?? WORK_LOCATION,
-   toCoords: nudgePoint(currentCoords ?? WORK_LOCATION, -0.012, 0.018),
-  });
- }, [currentCoords, navigation]);
+  } as never);
+ }, [navigation]);
 
  useEffect(() => {
   refreshLocation();
@@ -662,7 +640,7 @@ export default function AttendanceScreen() {
        style={styles.markButton}>
        <View style={styles.markButtonIconWrap}>
         {isCheckingLocation ? (
-         <ActivityIndicator size="small" color="#0F172A" />
+         <ActivityIndicator key="attendance-loading" size="small" color="#0F172A" />
         ) : (
          <MaterialCommunityIcons
           name={canMarkPresence ? 'fingerprint' : 'map-marker-alert-outline'}
@@ -787,7 +765,7 @@ export default function AttendanceScreen() {
        onPress={refreshLocation}
        disabled={isRefreshingLocation}>
        {isRefreshingLocation ? (
-        <ActivityIndicator size="small" color={theme.colors.primary} />
+        <ActivityIndicator key="attendance-loading-recent" size="small" color={theme.colors.primary} />
        ) : (
         <Feather name="refresh-ccw" size={12} color={theme.colors.primary} />
        )}
@@ -885,7 +863,7 @@ export default function AttendanceScreen() {
 
       <TouchableOpacity
        style={styles.hubGridItem}
-       onPress={handleOpenManualLogModal}
+       onPress={handleStartManualTravel}
        activeOpacity={0.7}>
        <LinearGradient
         colors={['#8B5CF615', '#8B5CF605']}
@@ -972,16 +950,6 @@ export default function AttendanceScreen() {
      </View>
     </View>
    </Modal>
-
-   <ManualLogModal
-    visible={isManualLogModalVisible}
-    onClose={handleCloseManualLogModal}
-    onSave={handleManualLogSaved}
-    theme={theme}
-    authToken={authToken ?? ''}
-    selectedProjectId={selectedProjectId}
-    projects={projects}
-   />
   </SafeAreaView>
  );
 }

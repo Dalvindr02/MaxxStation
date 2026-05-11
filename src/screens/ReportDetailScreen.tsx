@@ -115,7 +115,7 @@ export const ReportDetailScreen = () => {
 
    {isLoading ? (
     <View style={styles.loadingContainer}>
-     <ActivityIndicator size="large" color={theme.colors.primary} />
+     <ActivityIndicator key="report-detail-loading" size="large" color={theme.colors.primary} />
      <Text allowFontScaling={false} style={styles.loadingText}>
       Loading report details...
      </Text>

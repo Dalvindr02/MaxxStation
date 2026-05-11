@@ -12,6 +12,8 @@ export type RootStackParamList = {
      toCoords?: {latitude: number; longitude: number} | null;
     }
   | undefined;
+ AllLogs: undefined;
+ LogDetailScreen: {log: any} | undefined;
  ReportList: undefined;
  ReportDetail: {report: Record<string, unknown>} | undefined;
  TravelLogs: undefined;

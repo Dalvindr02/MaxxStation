@@ -15,6 +15,7 @@ export type CreateManualLogPayload = {
   billable: string;
   meeting_agenda: string;
   project_id: number;
+  id?: string | number;
   from_location?: string;
   to_location?: string;
   route_distance_meters?: number;
@@ -159,10 +160,10 @@ const findFirstBoolean = (payload: unknown, keys: string[]): boolean | null => {
     }
     if (typeof value === 'string') {
       const normalized = value.trim().toLowerCase();
-      if (['1', 'true', 'yes', 'billable'].includes(normalized)) {
+      if (['1', 'true', 'yes', 'billable', 'is_billable'].includes(normalized)) {
         return true;
       }
-      if (['0', 'false', 'no', 'non-billable'].includes(normalized)) {
+      if (['0', 'false', 'no', 'non-billable', 'non_billable', 'non billable'].includes(normalized)) {
         return false;
       }
     }
@@ -454,10 +455,10 @@ export const mapManualLogEntry = (
       findFirstString(item, ['log_type', 'category', 'meeting_type', 'type']) ?? 'Travel Log',
     notes:
       findFirstString(item, [
-        'description',
         'notes',
         'meeting_agenda',
         'agenda',
+        'description',
       ]) ?? '',
     billable:
       findFirstBoolean(item, ['billable', 'is_billable', 'billable_status']) ?? false,
@@ -540,6 +541,74 @@ export const createManualLogRequest = async (
     }
 
     throw new Error('Unable to create manual log. Please try again.');
+  }
+};
+
+export const updateManualLogRequest = async (
+  id: string | number,
+  payload: CreateManualLogPayload,
+  authToken?: string | null,
+): Promise<CreateManualLogResult> => {
+  try {
+    if (!authToken?.trim()) {
+      throw new Error('Login token is missing. Please sign in again.');
+    }
+
+    console.log('Update manual log request payload:', payload);
+
+    const response = await axios.post(
+      `${buildApiUrl(API_ENDPOINTS.updateManualLog)}/${id}`,
+      payload,
+      {
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+          Authorization: `Bearer ${authToken.trim()}`,
+        },
+      },
+    );
+
+    console.log('Update manual log API response:', response.data);
+
+    const responsePayload = isRecord(response.data)
+      ? (response.data as Record<string, unknown>)
+      : null;
+    const message =
+      (responsePayload &&
+        typeof responsePayload.message === 'string' &&
+        responsePayload.message.trim()) ||
+      'Manual log updated successfully.';
+    const success = responsePayload
+      ? getSuccessStatus(responsePayload) || response.status < 300
+      : response.status < 300;
+
+    if (!success) {
+      throw new Error(message);
+    }
+
+    return {
+      success,
+      message,
+      data: responsePayload,
+    };
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      console.log('Update manual log API error response:', error.response?.data);
+
+      const errorPayload = error.response?.data;
+      const fallback = error.response?.status
+        ? `Update manual log request failed with status ${error.response.status}`
+        : 'Unable to update manual log. Please try again.';
+
+      throw new Error(getErrorMessage(errorPayload, fallback));
+    }
+
+    if (error instanceof Error) {
+      throw error;
+    }
+
+    throw new Error('Unable to update manual log. Please try again.');
   }
 };
 

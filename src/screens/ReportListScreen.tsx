@@ -378,7 +378,10 @@ const createStyles = (theme: AppTheme) => {
    shadowRadius: 16,
   },
   heroGradient: {
-   padding: 16,
+   width: '100%',
+   padding: 5,
+   borderRadius: 16,
+   justifyContent: 'center',
   },
   heroTopRow: {
    flexDirection: 'row',
@@ -408,6 +411,7 @@ const createStyles = (theme: AppTheme) => {
    flexDirection: 'row',
    alignItems: 'center',
    gap: 6,
+   right: 9,
   },
   heroActionText: {
    color: theme.colors.text,
@@ -416,7 +420,8 @@ const createStyles = (theme: AppTheme) => {
   },
   heroTitle: {
    color: theme.colors.text,
-   fontSize: 24,
+   fontSize: 22,
+   marginLeft: '1%',
    fontWeight: '800',
    lineHeight: 30,
    marginBottom: 8,
@@ -431,10 +436,12 @@ const createStyles = (theme: AppTheme) => {
    flexDirection: 'row',
    flexWrap: 'wrap',
    gap: 10,
-   justifyContent: 'space-between',
+   alignSelf: 'center',
+   justifyContent: 'space-evenly',
+   bottom: 7,
   },
   statCard: {
-   width: '48%',
+   width: '44%',
    borderRadius: 16,
    borderWidth: 1,
    borderColor: 'rgba(255,255,255,0.08)',
@@ -446,6 +453,7 @@ const createStyles = (theme: AppTheme) => {
   },
   statGradient: {
    padding: 12,
+   borderRadius: 16,
   },
   statTopRow: {
    flexDirection: 'row',

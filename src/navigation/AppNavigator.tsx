@@ -26,6 +26,7 @@ import {ProfileScreen} from '../screens/ProfileScreen';
 import {ReportScreen} from '../screens/ReportScreen';
 import LogsHistoryScreen from '../screens/LogHistoryScreen';
 import {LogDetailScreen} from '../screens/LogDetailScreen';
+import {AllLogsScreen} from '../screens/AllLogsScreen';
 import {TravelLogDetailScreen} from '../screens/TravelLogDetailScreen';
 import {ReportListScreen} from '../screens/ReportListScreen';
 import {ReportDetailScreen} from '../screens/ReportDetailScreen';
@@ -173,6 +174,22 @@ export const AppNavigator = () => {
       <Stack.Screen
        name="TravelLogs"
        component={TravelLogListScreen}
+       options={{
+        presentation: 'modal',
+        animation: 'slide_from_right',
+       }}
+      />
+      <Stack.Screen
+       name="AllLogs"
+       component={AllLogsScreen}
+       options={{
+        presentation: 'modal',
+        animation: 'slide_from_right',
+       }}
+      />
+      <Stack.Screen
+       name="LogDetailScreen"
+       component={LogDetailScreen}
        options={{
         presentation: 'modal',
         animation: 'slide_from_right',

@@ -284,7 +284,7 @@ export const ReportScreen = () => {
      <View style={styles.grid}>
       {isLoading ? (
        <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={theme.colors.primary} />
+        <ActivityIndicator key="report-loading" size="large" color={theme.colors.primary} />
         <Text allowFontScaling={false} style={styles.loadingText}>
          Loading daily summary...
         </Text>

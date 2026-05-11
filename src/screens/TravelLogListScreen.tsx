@@ -180,11 +180,13 @@ export const TravelLogListScreen = () => {
         end={{ x: 0.5, y: 1 }}
         style={styles.backgroundGradient}
       />
-      <TopHeader title="Travel Logs" />
+      <View style={{ padding: 14 }}>
+        <TopHeader title="Travel Logs" />
+      </View>
 
       {isLoading ? (
         <View style={styles.centerState}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
+          <ActivityIndicator key="travel-log-list-loading" size="large" color={theme.colors.primary} />
           <Text allowFontScaling={false} style={styles.loadingText}>
             Fetching travel logs...
           </Text>

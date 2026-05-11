@@ -13,6 +13,8 @@ export const API_ENDPOINTS = {
  reportsList: 'reports-list',
  reportDetail: 'report-detail',
  travelLogDetail: 'travel-logs-detail',
+ homeScreen: 'home-screen',
+ updateManualLog: 'manual-log-update',
 } as const;
 
 export const buildApiUrl = (endpoint: string) => {

@@ -1,4 +1,4 @@
-import React, {useMemo} from 'react';
+import React, {useMemo, useEffect} from 'react';
 import {
  ScrollView,
  StyleSheet,
@@ -15,9 +15,11 @@ import {moderateScale} from 'react-native-size-matters';
 import {AnimatedCard} from '../components/ui';
 import {TopHeader} from '../components/TopHeader';
 import {useAppTheme} from '../context/ThemeContext';
+import {useDialog} from '../context/DialogContext';
 import {AppTheme} from '../theme';
-import {useAppSelector} from '../store/hooks';
+import {useAppDispatch, useAppSelector} from '../store/hooks';
 import {SHIFT_WINDOW} from '../constants/shift';
+import {fetchHomeData} from '../store/homeSlice';
 
 type ActionTone = 'blue' | 'sunset' | 'orange' | 'green';
 
@@ -28,40 +30,58 @@ const quickActions: {
  route: string;
  tone: ActionTone;
 }[] = [
- {
-  label: 'Mark Presence',
-  icon: 'navigation',
-  hint: 'Attendance',
-  route: 'Attendance',
-  tone: 'blue',
- },
- {
-  label: 'Add Manual Log',
-  icon: 'edit-3',
-  hint: 'Time entry',
-  route: 'Logs',
-  tone: 'sunset',
- },
- {
-  label: 'Add Expense',
-  icon: 'credit-card',
-  hint: 'Receipts',
-  route: 'Expenses',
-  tone: 'orange',
- },
- {
-  label: 'E.O.D Report',
-  icon: 'send',
-  hint: 'Day-end',
-  route: 'Report',
-  tone: 'green',
- },
-];
+  {
+   label: 'Mark Presence',
+   icon: 'navigation',
+   hint: 'Attendance',
+   route: 'Attendance',
+   tone: 'blue',
+  },
+  {
+   label: 'All Logs',
+   icon: 'list',
+   hint: 'View history',
+   route: 'AllLogs',
+   tone: 'orange',
+  },
+  {
+   label: 'Add Manual Log',
+   icon: 'edit-3',
+   hint: 'Time entry',
+   route: 'Logs',
+   tone: 'sunset',
+  },
+  {
+   label: 'Add Expense',
+   icon: 'credit-card',
+   hint: 'Receipts',
+   route: 'Expenses',
+   tone: 'blue',
+  },
+  {
+   label: 'E.O.D Report',
+   icon: 'send',
+   hint: 'Day-end',
+   route: 'Report',
+   tone: 'green',
+  },
+ ];
 
 export default function HomeScreen() {
  const navigation = useNavigation<any>();
+ const dispatch = useAppDispatch();
+ const {showDialog} = useDialog();
  const {theme} = useAppTheme();
  const auth = useAppSelector(state => state.auth);
+ const homeData = useAppSelector(state => state.home.data);
+ const {items: projects, selectedProjectId} = useAppSelector(state => state.projects);
+
+ useEffect(() => {
+  if (auth.token) {
+   dispatch(fetchHomeData(auth.token));
+  }
+ }, [auth.token, dispatch]);
+
  const {width} = useWindowDimensions();
  const styles = useMemo(() => createStyles(theme, width), [theme, width]);
  const heroGradientColors = useMemo(
@@ -70,38 +90,10 @@ export default function HomeScreen() {
  );
 
  const profile = useMemo(
-  () => buildHomeProfile(auth.loginData, auth.user, auth.token),
-  [auth.loginData, auth.token, auth.user],
+  () => buildHomeProfile(auth.loginData, auth.user, auth.token, homeData),
+  [auth.loginData, auth.token, auth.user, homeData],
  );
 
- const getActionCardStyle = (tone: ActionTone) => {
-  switch (tone) {
-   case 'blue':
-    return styles.actionCardBlue;
-   case 'sunset':
-    return styles.actionCardSunset;
-   case 'orange':
-    return styles.actionCardOrange;
-   case 'green':
-    return styles.actionCardGreen;
-   default:
-  }
- };
-
- const getActionIconStyle = (tone: ActionTone) => {
-  switch (tone) {
-   case 'blue':
-    return styles.actionIconBlue;
-   case 'sunset':
-    return styles.actionIconSunset;
-   case 'orange':
-    return styles.actionIconOrange;
-   case 'green':
-    return styles.actionIconGreen;
-   default:
-    return styles.actionIconBlue;
-  }
- };
 
  return (
   <SafeAreaView style={styles.safe}>
@@ -112,7 +104,7 @@ export default function HomeScreen() {
     style={styles.backgroundGradient}
    />
 
-   <TopHeader title="Home" />
+   <TopHeader title="Home" hideBack />
    <ScrollView showsVerticalScrollIndicator={false}>
     <AnimatedCard style={styles.heroCard} delay={40}>
      <LinearGradient
@@ -264,45 +256,104 @@ export default function HomeScreen() {
      </Text>
     </View>
 
-    <AnimatedCard style={styles.grid} delay={130}>
-     {quickActions.map(item => (
-      <TouchableOpacity
-       key={item.label}
-       style={[styles.actionCard, getActionCardStyle(item.tone)]}
-       onPress={() => navigation.navigate(item.route)}
-       activeOpacity={0.85}>
-       <View style={[styles.actionRail, getActionIconStyle(item.tone)]} />
-       <View style={styles.actionWatermark}>
-        <Feather name={item.icon} size={32} color="rgba(255,255,255,0.18)" />
-       </View>
-
-       <View style={styles.actionTopRow}>
-        <View style={[styles.actionIcon, getActionIconStyle(item.tone)]}>
-         <Feather name={item.icon} size={15} color="#FFFFFF" />
+    <View style={styles.activityHub}>
+     <View style={styles.hubGrid}>
+      {quickActions.map(item => (
+       <TouchableOpacity
+        key={item.label}
+        style={styles.hubGridItem}
+        onPress={() => {
+         if (item.label === 'Add Manual Log') {
+          showDialog({
+           title: 'Create Log',
+           message: 'What type of log would you like to create?',
+           variant: 'info',
+           primaryAction: {
+            label: 'Manual Log',
+            onPress: () => navigation.navigate('Logs'),
+           },
+           secondaryAction: {
+            label: 'Travel Log',
+            onPress: () =>
+             navigation.navigate('AttendanceTravel', {
+              mode: 'manual',
+              fromCoords: null,
+              toCoords: null,
+             }),
+           },
+          });
+         } else if (item.label === 'E.O.D Report') {
+          showDialog({
+           title: 'Reports',
+           message: "View today's report or all previous reports?",
+           variant: 'info',
+           primaryAction: {
+            label: "Today's Report",
+            onPress: () => navigation.navigate('Report'),
+           },
+           secondaryAction: {
+            label: 'All Reports',
+            onPress: () => navigation.navigate('ReportList'),
+           },
+          });
+         } else {
+          navigation.navigate(item.route);
+         }
+        }}
+        activeOpacity={0.7}>
+        <LinearGradient
+         colors={
+          item.tone === 'blue'
+           ? ['#3B82F615', '#3B82F605']
+           : item.tone === 'sunset'
+           ? ['#F43F5E15', '#F43F5E05']
+           : item.tone === 'orange'
+           ? ['#F9731615', '#F9731605']
+           : ['#10B98115', '#10B98105']
+         }
+         style={StyleSheet.absoluteFill}
+        />
+        <View
+         style={[
+          styles.hubIconWrap,
+          {
+           backgroundColor:
+            item.tone === 'blue'
+             ? '#3B82F615'
+             : item.tone === 'sunset'
+             ? '#F43F5E15'
+             : item.tone === 'orange'
+             ? '#F9731615'
+             : '#10B98115',
+          },
+         ]}>
+         <Feather
+          name={item.icon}
+          size={16}
+          color={
+           item.tone === 'blue'
+            ? '#3B82F6'
+            : item.tone === 'sunset'
+            ? '#F43F5E'
+            : item.tone === 'orange'
+            ? '#F97316'
+            : '#10B981'
+          }
+         />
         </View>
-        <Text allowFontScaling={false} style={styles.actionHint}>
+        <Text allowFontScaling={false} style={styles.hubItemLabel}>
+         {item.label}
+        </Text>
+        <Text allowFontScaling={false} style={styles.hubItemHint}>
          {item.hint}
         </Text>
-       </View>
-
-       <Text allowFontScaling={false} style={styles.actionLabel}>
-        {item.label}
-       </Text>
-
-       <View style={styles.actionFooter}>
-        <View style={styles.actionOpenChip}>
-         <Text allowFontScaling={false} style={styles.actionOpenText}>
-          Open
-         </Text>
-        </View>
-        <Feather name="arrow-right" size={16} color={theme.colors.muted} />
-       </View>
-      </TouchableOpacity>
-     ))}
-    </AnimatedCard>
+       </TouchableOpacity>
+      ))}
+     </View>
+    </View>
     <View style={{height: 20}} />
-   </ScrollView>
-  </SafeAreaView>
+    </ScrollView>
+   </SafeAreaView>
  );
 }
 
@@ -403,12 +454,14 @@ const normalizeTime = (value: string | null, fallback: string) => {
 };
 
 const buildHomeProfile = (
- loginData: Record<string, unknown> | null,
- user: Record<string, unknown> | null,
- token: string | null,
+  loginData: Record<string, unknown> | null,
+  user: Record<string, unknown> | null,
+  token: string | null,
+  apiHomeData: any | null = null,
 ) => {
- const source = user ?? loginData ?? {};
- const homeData = findNestedValue(source, ['home']);
+  const source = user ?? loginData ?? {};
+  // Prioritize apiHomeData if available
+  const homeData = apiHomeData || findNestedValue(source, ['home']);
  const fullName =
   getStringValue(source, [
    'userName',
@@ -931,129 +984,57 @@ const createStyles = (theme: AppTheme, screenWidth: number) => {
    color: theme.colors.text,
    letterSpacing: 0.3,
   },
-  grid: {
+  activityHub: {
+   backgroundColor: glassCard,
+   borderRadius: moderateScale(24),
+   borderWidth: 1,
+   borderColor,
+   padding: moderateScale(16),
+   marginBottom: moderateScale(12),
+   shadowColor: theme.colors.glowStrong,
+   shadowOffset: {width: 0, height: 10},
+   shadowOpacity: 0.15,
+   shadowRadius: 20,
+  },
+  hubGrid: {
    flexDirection: 'row',
    flexWrap: 'wrap',
    justifyContent: 'space-between',
-   rowGap: gridGap,
-   backgroundColor: 'transparent',
-   borderWidth: 0,
-   shadowOpacity: 0,
-   elevation: 0,
-   padding: 0,
+   gap: moderateScale(8),
   },
-  actionCard: {
-   width: screenWidth < 380 ? '100%' : '48%',
-   minHeight: moderateScale(144),
-   borderRadius: moderateScale(22),
-   borderWidth: 1,
-   borderColor,
-   paddingHorizontal: moderateScale(14),
-   paddingVertical: moderateScale(14),
-   backgroundColor: glassSurface,
-   shadowColor: theme.colors.shadow,
-   shadowOffset: {width: 0, height: 6},
-   shadowOpacity: theme.isDark ? 0.3 : 0.12,
-   shadowRadius: 10,
-   elevation: 3,
-   overflow: 'hidden',
-   position: 'relative',
-  },
-  actionCardBlue: {
-   borderColor: 'rgba(69,202,255,0.45)',
-   backgroundColor: theme.isDark
-    ? 'rgba(10,26,52,0.85)'
-    : 'rgba(225,243,255,0.95)',
-  },
-  actionCardSunset: {
-   borderColor: 'rgba(255,91,148,0.45)',
-   backgroundColor: theme.isDark
-    ? 'rgba(54,15,32,0.85)'
-    : 'rgba(255,232,242,0.94)',
-  },
-  actionCardOrange: {
-   borderColor: 'rgba(255,159,67,0.45)',
-   backgroundColor: theme.isDark
-    ? 'rgba(48,20,10,0.8)'
-    : 'rgba(255,239,227,0.94)',
-  },
-  actionCardGreen: {
-   borderColor: 'rgba(52,211,153,0.45)',
-   backgroundColor: theme.isDark
-    ? 'rgba(9,39,30,0.8)'
-    : 'rgba(225,245,236,0.94)',
-  },
-  actionRail: {
-   position: 'absolute',
-   left: 0,
-   top: 0,
-   bottom: 0,
-   width: moderateScale(6),
-   opacity: 0.95,
-  },
-  actionWatermark: {
-   position: 'absolute',
-   right: moderateScale(9),
-   top: moderateScale(16),
-  },
-  actionTopRow: {
-   flexDirection: 'row',
-   alignItems: 'center',
-   marginBottom: moderateScale(12),
-   minHeight: moderateScale(36),
-  },
-  actionIconBlue: {
-   backgroundColor: '#1C7ED6',
-  },
-  actionIconSunset: {
-   backgroundColor: '#F43F5E',
-  },
-  actionIconOrange: {
-   backgroundColor: '#FF8A3C',
-  },
-  actionIconGreen: {
-   backgroundColor: '#10B981',
-  },
-  actionIcon: {
-   width: moderateScale(36),
-   height: moderateScale(36),
-   borderRadius: moderateScale(12),
+  hubGridItem: {
+   width: '48%',
+   backgroundColor: 'rgba(255,255,255,0.03)',
+   borderRadius: moderateScale(14),
+   padding: moderateScale(8),
    alignItems: 'center',
    justifyContent: 'center',
-   marginRight: moderateScale(8),
-  },
-  actionLabel: {
-   color: theme.isDark ? '#FFFFFF' : theme.colors.text,
-   fontWeight: '700',
-   fontSize: moderateScale(15),
-   lineHeight: moderateScale(20),
-   minHeight: moderateScale(40),
-   marginBottom: moderateScale(10),
-  },
-  actionHint: {
-   color: textMuted,
-   fontWeight: '600',
-   fontSize: moderateScale(11),
-   flexShrink: 1,
-  },
-  actionFooter: {
-   flexDirection: 'row',
-   alignItems: 'center',
-   justifyContent: 'space-between',
-   marginTop: 'auto',
-  },
-  actionOpenChip: {
-   borderRadius: moderateScale(10),
-   paddingHorizontal: moderateScale(9),
-   paddingVertical: moderateScale(5),
-   backgroundColor: theme.isDark ? 'rgba(255,255,255,0.1)' : '#FFFFFF',
    borderWidth: 1,
-   borderColor: chipBorder,
+   borderColor: 'rgba(255,255,255,0.05)',
+   overflow: 'hidden',
+   minHeight: moderateScale(75),
+   marginBottom: moderateScale(4),
   },
-  actionOpenText: {
-   fontSize: moderateScale(11),
+  hubIconWrap: {
+   width: moderateScale(34),
+   height: moderateScale(34),
+   borderRadius: moderateScale(10),
+   alignItems: 'center',
+   justifyContent: 'center',
+   marginBottom: moderateScale(6),
+  },
+  hubItemLabel: {
    color: theme.colors.text,
+   fontSize: moderateScale(11),
    fontWeight: '700',
+   textAlign: 'center',
+  },
+  hubItemHint: {
+   color: textMuted,
+   fontSize: moderateScale(9),
+   fontWeight: '600',
+   marginTop: 1,
+   textAlign: 'center',
   },
  });
 };
