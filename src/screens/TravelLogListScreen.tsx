@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -16,6 +16,8 @@ import { useAppTheme } from '../context/ThemeContext';
 import { AppTheme } from '../theme';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { fetchTravelLogs, TravelLogEntry } from '../store/travelLogSlice';
+import { deleteTravelLogRequest } from '../services/manualLogService';
+import { useDialog } from '../context/DialogContext';
 import { AnimatedCard } from '../components/ui';
 
 const cleanAddress = (addr: string | undefined) => {
@@ -33,12 +35,16 @@ const TravelLogListItem = ({
   theme,
   styles,
   onPress,
+  onEdit,
+  onDelete,
   index,
 }: {
   item: TravelLogEntry;
   theme: AppTheme;
   styles: any;
   onPress: (item: TravelLogEntry) => void;
+  onEdit: (item: TravelLogEntry) => void;
+  onDelete: (item: TravelLogEntry) => void;
   index: number;
 }) => {
   const [isExpanded, setIsExpanded] = React.useState(false);
@@ -46,7 +52,6 @@ const TravelLogListItem = ({
   const from = cleanAddress(item.from_address) || 'Start';
   const to = cleanAddress(item.to_address) || 'End';
   const address = `${from} → ${to}`;
-  const isLongAddress = address.length > 50;
 
   return (
     <AnimatedCard delay={index * 100} style={styles.logCard}>
@@ -128,6 +133,29 @@ const TravelLogListItem = ({
             )}
           </View>
         )}
+
+        {isExpanded && (
+          <View style={styles.actionRow}>
+            <TouchableOpacity
+              style={[styles.actionButton, { borderColor: theme.colors.border }]}
+              onPress={() => onEdit(item)}>
+              <Feather name="edit-2" size={14} color={theme.colors.text} />
+              <Text allowFontScaling={false} style={styles.actionButtonText}>
+                Edit
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionButton, { borderColor: 'rgba(239, 68, 68, 0.3)' }]}
+              onPress={() => onDelete(item)}>
+              <Feather name="trash-2" size={14} color="#EF4444" />
+              <Text
+                allowFontScaling={false}
+                style={[styles.actionButtonText, { color: '#EF4444' }]}>
+                Delete
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </TouchableOpacity>
     </AnimatedCard>
   );
@@ -149,18 +177,107 @@ export const TravelLogListScreen = () => {
   const { theme } = useAppTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const dispatch = useAppDispatch();
+  const { showDialog } = useDialog();
+  const authToken = useAppSelector(state => state.auth.token);
+  const isMounted = useRef(true);
+  const deleteRequestIdRef = useRef(0);
+  const deleteInFlightRef = useRef(false);
+
 
   const { travelLogs, isLoading, error } = useAppSelector(
     state => state.travelLogs,
   );
 
   useEffect(() => {
+    isMounted.current = true;
     dispatch(fetchTravelLogs());
+
+    return () => {
+      isMounted.current = false;
+    };
   }, [dispatch]);
 
   const handlePressLog = (item: TravelLogEntry) => {
     navigation.navigate('TravelLogDetail', { id: item.id });
   };
+
+  const handleEdit = (item: TravelLogEntry) => {
+    navigation.navigate('AttendanceTravel', {
+      editLogId: item.id,
+      editLogData: item,
+    });
+  };
+
+  const handleDelete = (item: TravelLogEntry) => {
+    if (!item?.id) {
+      showDialog({
+        title: 'Error',
+        message: 'Travel log id is missing. Please refresh and try again.',
+        variant: 'error',
+        primaryAction: { label: 'Okay' },
+      });
+      return;
+    }
+
+    showDialog({
+      title: 'Delete Travel Log',
+      message: 'Are you sure you want to delete this travel log? This action cannot be undone.',
+      variant: 'warning',
+      primaryAction: {
+        label: 'Delete',
+        onPress: async () => {
+          if (deleteInFlightRef.current) return;
+          deleteInFlightRef.current = true;
+          const requestId = deleteRequestIdRef.current + 1;
+          deleteRequestIdRef.current = requestId;
+          try {
+            const result = await deleteTravelLogRequest(item.id, authToken);
+            if (!isMounted.current || requestId !== deleteRequestIdRef.current) {
+              return;
+            }
+
+            showDialog({
+              title: result?.success ? 'Success' : 'Error',
+              message:
+                result?.message ||
+                (result?.success
+                  ? 'Travel log deleted successfully.'
+                  : 'Failed to delete travel log.'),
+              variant: result?.success ? 'success' : 'error',
+              primaryAction: {
+                label: 'Okay',
+                onPress: result?.success
+                  ? () => {
+                      if (isMounted.current) {
+                        dispatch(fetchTravelLogs());
+                      }
+                    }
+                  : undefined,
+              },
+            });
+          } catch (error) {
+            if (!isMounted.current || requestId !== deleteRequestIdRef.current) {
+              return;
+            }
+            showDialog({
+              title: 'Error',
+              message: error instanceof Error ? error.message : 'Failed to delete travel log.',
+              variant: 'error',
+              primaryAction: { label: 'Okay' },
+            });
+          } finally {
+            if (requestId === deleteRequestIdRef.current) {
+              deleteInFlightRef.current = false;
+            }
+          }
+        },
+      },
+      secondaryAction: {
+        label: 'Cancel',
+      },
+    });
+  };
+
 
   const renderItem = ({ item, index }: { item: TravelLogEntry; index: number }) => (
     <TravelLogListItem
@@ -168,6 +285,8 @@ export const TravelLogListScreen = () => {
       theme={theme}
       styles={styles}
       onPress={handlePressLog}
+      onEdit={handleEdit}
+      onDelete={handleDelete}
       index={index % 10}
     />
   );
@@ -319,6 +438,31 @@ const createStyles = (theme: AppTheme) =>
       fontSize: 11,
       fontWeight: '700',
       marginTop: 4,
+    },
+    actionRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      marginTop: 14,
+      paddingTop: 12,
+      borderTopWidth: 1,
+      borderTopColor: 'rgba(255, 255, 255, 0.05)',
+    },
+    actionButton: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      paddingVertical: 8,
+      borderRadius: 8,
+      borderWidth: 1,
+      backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    },
+    actionButtonText: {
+      color: theme.colors.text,
+      fontSize: 12,
+      fontWeight: '600',
     },
     centerState: {
       flex: 1,

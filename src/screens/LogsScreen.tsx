@@ -100,9 +100,14 @@ const parseBillableStatus = (value: unknown): boolean => {
    return true;
   }
   if (
-   ['0', 'false', 'no', 'non-billable', 'non_billable', 'non billable'].includes(
-    normalized,
-   )
+   [
+    '0',
+    'false',
+    'no',
+    'non-billable',
+    'non_billable',
+    'non billable',
+   ].includes(normalized)
   ) {
    return false;
   }
@@ -284,25 +289,25 @@ export const LogsScreen = () => {
   }
  }, [selectedProject, selectedTaskId]);
 
-  useEffect(() => {
-    if (editingLog) {
-      // Find project
-      const project = projects.find(p => p.id === String(editingLog.projectId));
-      if (project) {
-        dispatch(setSelectedProject(project.id));
-      }
-      
-      // Set other fields
-      setStartDate(new Date(editingLog.date));
-      setEndDate(new Date(editingLog.date));
-      setStartTime(editingLog.startTime);
-      setEndTime(editingLog.endTime);
-      setCategory(editingLog.category);
-      setNotes(editingLog.notes);
-      setBillable(editingLog.billable);
-      setSelectedTaskId(editingLog.taskId);
-    }
-  }, [editingLog, projects, dispatch]);
+ useEffect(() => {
+  if (editingLog) {
+   // Find project
+   const project = projects.find(p => p.id === String(editingLog.projectId));
+   if (project) {
+    dispatch(setSelectedProject(project.id));
+   }
+
+   // Set other fields
+   setStartDate(new Date(editingLog.date));
+   setEndDate(new Date(editingLog.date));
+   setStartTime(editingLog.startTime);
+   setEndTime(editingLog.endTime);
+   setCategory(editingLog.category);
+   setNotes(editingLog.notes);
+   setBillable(editingLog.billable);
+   setSelectedTaskId(editingLog.taskId);
+  }
+ }, [editingLog, projects, dispatch]);
 
  const saveManualLog = async () => {
   if (!selectedProject) {
@@ -357,29 +362,33 @@ export const LogsScreen = () => {
   };
 
   try {
-    setIsSavingLog(true);
-    let result;
-    if (editingLog) {
-      result = await updateManualLogRequest(editingLog.id, payload, authToken);
-    } else {
-      result = await createManualLogRequest(payload, authToken);
-    }
-    
-    await dispatch(fetchLogs()).unwrap();
-    // Guard: screen may have been unmounted while request was in-flight
-    if (!isMounted.current) return;
-    
-    showDialog({
-      title: editingLog ? 'Log updated' : 'Log created',
-      message: result.message || (editingLog ? 'Manual log updated successfully.' : 'Manual log created successfully.'),
-      variant: 'success',
-      primaryAction: {label: 'OK'},
-    });
-    
-    if (editingLog) {
-      clearEditing();
-    }
-    setNotes('Manual log entry');
+   setIsSavingLog(true);
+   let result;
+   if (editingLog) {
+    result = await updateManualLogRequest(editingLog.id, payload, authToken);
+   } else {
+    result = await createManualLogRequest(payload, authToken);
+   }
+
+   await dispatch(fetchLogs()).unwrap();
+   // Guard: screen may have been unmounted while request was in-flight
+   if (!isMounted.current) return;
+
+   showDialog({
+    title: editingLog ? 'Log updated' : 'Log created',
+    message:
+     result.message ||
+     (editingLog
+      ? 'Manual log updated successfully.'
+      : 'Manual log created successfully.'),
+    variant: 'success',
+    primaryAction: {label: 'OK'},
+   });
+
+   if (editingLog) {
+    clearEditing();
+   }
+   setNotes('Manual log entry');
   } catch (error) {
    if (!isMounted.current) return;
    showDialog({
@@ -394,33 +403,34 @@ export const LogsScreen = () => {
   }
  };
 
-  const resetLogForm = () => {
-    setStartDate(new Date());
-    setEndDate(new Date());
-    setStartTime('09:00');
-    setEndTime('10:00');
-    setCategory('Meeting');
-    setNotes('Manual log entry');
-    setBillable(true);
-    clearEditing();
-  };
+ const resetLogForm = () => {
+  setStartDate(new Date());
+  setEndDate(new Date());
+  setStartTime('09:00');
+  setEndTime('10:00');
+  setCategory('Meeting');
+  setNotes('Manual log entry');
+  setBillable(true);
+  clearEditing();
+ };
 
-  const handleDiscardEdit = () => {
-    if (!editingLog) return;
-    
-    showDialog({
-      title: 'Discard changes?',
-      message: 'Your manual log edits will be lost and the form will return to Add mode.',
-      variant: 'warning',
-      primaryAction: {
-        label: 'Discard',
-        onPress: () => {
-          resetLogForm();
-        },
-      },
-      secondaryAction: {label: 'Keep editing'},
-    });
-  };
+ const handleDiscardEdit = () => {
+  if (!editingLog) return;
+
+  showDialog({
+   title: 'Discard changes?',
+   message:
+    'Your manual log edits will be lost and the form will return to Add mode.',
+   variant: 'warning',
+   primaryAction: {
+    label: 'Discard',
+    onPress: () => {
+     resetLogForm();
+    },
+   },
+   secondaryAction: {label: 'Keep editing'},
+  });
+ };
 
  const handleEdit = (log: LogEntry) => {
   startEditing(log);
@@ -536,12 +546,12 @@ export const LogsScreen = () => {
    <ScrollView
     showsVerticalScrollIndicator={false}
     contentContainerStyle={styles.scrollContent}>
-     <View style={styles.formCard}>
-      <View style={styles.formHeader}>
-        <Text allowFontScaling={false} style={styles.formTitle}>
-          {editingLog ? 'Edit Manual Log' : 'Add Manual Log'}
-        </Text>
-      </View>
+    <View style={styles.formCard}>
+     <View style={styles.formHeader}>
+      <Text allowFontScaling={false} style={styles.formTitle}>
+       {editingLog ? 'Edit Manual Log' : 'Add Manual Log'}
+      </Text>
+     </View>
      <Text allowFontScaling={false} style={styles.inputHeading}>
       Select Project
      </Text>
@@ -666,25 +676,31 @@ export const LogsScreen = () => {
       style={styles.notesInput}
       multiline
      />
-      <ActionButton
-       style={[styles.saveButton, isSavingLog && styles.saveButtonDisabled]}
-       onPress={saveManualLog}
-       disabled={isSavingLog}
-       icon={isSavingLog ? 'loader' : 'save'}
-       label={isSavingLog ? 'Saving...' : editingLog ? 'Update Log' : 'Save Manual Log'}
-       subtitle={editingLog ? 'Save your changes to this log' : 'Save with the same expense gradient style'}
-      />
-      {editingLog ? (
-       <TouchableOpacity
-        activeOpacity={0.85}
-        onPress={handleDiscardEdit}
-        style={styles.discardEditButton}>
-        <Feather name="x-circle" size={14} color={theme.colors.warning} />
-        <Text allowFontScaling={false} style={styles.discardEditText}>
-         Discard Edit
-        </Text>
-       </TouchableOpacity>
-      ) : null}
+     <ActionButton
+      style={[styles.saveButton, isSavingLog && styles.saveButtonDisabled]}
+      onPress={saveManualLog}
+      disabled={isSavingLog}
+      icon={isSavingLog ? 'loader' : 'save'}
+      label={
+       isSavingLog ? 'Saving...' : editingLog ? 'Update Log' : 'Save Manual Log'
+      }
+      subtitle={
+       editingLog
+        ? 'Save your changes to this log'
+        : 'Save with the same expense gradient style'
+      }
+     />
+     {editingLog ? (
+      <TouchableOpacity
+       activeOpacity={0.85}
+       onPress={handleDiscardEdit}
+       style={styles.discardEditButton}>
+       <Feather name="x-circle" size={14} color={theme.colors.warning} />
+       <Text allowFontScaling={false} style={styles.discardEditText}>
+        Discard Edit
+       </Text>
+      </TouchableOpacity>
+     ) : null}
     </View>
 
     <View style={styles.logsHeader}>
@@ -702,7 +718,7 @@ export const LogsScreen = () => {
        onPress={navigateToHistory}
        style={styles.logsHeaderAction}>
        <Text allowFontScaling={false} style={styles.viewAllLink}>
-        View History
+        See All
        </Text>
       </TouchableOpacity>
      </View>
@@ -917,20 +933,20 @@ const createStyles = (theme: AppTheme) => {
    paddingHorizontal: 12,
    backgroundColor: theme.colors.card,
   },
-   taskDropdownMenu: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: borderColor,
-    backgroundColor: '#1A0E2A', // Solid dark background from theme
-    overflow: 'hidden',
-    marginTop: -4,
-   },
-   taskDropdownItem: {
-    minHeight: 48, // Slightly taller for better touch targets
-    justifyContent: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
-   },
+  taskDropdownMenu: {
+   borderRadius: 12,
+   borderWidth: 1,
+   borderColor: borderColor,
+   backgroundColor: '#1A0E2A', // Solid dark background from theme
+   overflow: 'hidden',
+   marginTop: -4,
+  },
+  taskDropdownItem: {
+   minHeight: 48, // Slightly taller for better touch targets
+   justifyContent: 'center',
+   borderBottomWidth: 1,
+   borderBottomColor: 'rgba(255,255,255,0.05)',
+  },
   taskDropdownItemText: {
    color: theme.colors.text,
    fontSize: 13,
@@ -1208,27 +1224,27 @@ const createStyles = (theme: AppTheme) => {
    fontWeight: '600',
    color: theme.colors.primary,
   },
-   deleteActionText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: theme.colors.danger,
-   },
-   discardEditButton: {
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 216, 107, 0.4)',
-    backgroundColor: 'rgba(255, 216, 107, 0.12)',
-    borderRadius: 14,
-    height: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-   },
-   discardEditText: {
-    color: theme.colors.warning,
-    fontSize: 13,
-    fontWeight: '700',
-   },
-  });
+  deleteActionText: {
+   fontSize: 12,
+   fontWeight: '600',
+   color: theme.colors.danger,
+  },
+  discardEditButton: {
+   marginTop: 10,
+   borderWidth: 1,
+   borderColor: 'rgba(255, 216, 107, 0.4)',
+   backgroundColor: 'rgba(255, 216, 107, 0.12)',
+   borderRadius: 14,
+   height: 44,
+   flexDirection: 'row',
+   alignItems: 'center',
+   justifyContent: 'center',
+   gap: 8,
+  },
+  discardEditText: {
+   color: theme.colors.warning,
+   fontSize: 13,
+   fontWeight: '700',
+  },
+ });
 };

@@ -1,0 +1,135 @@
+src/screens/AllLogsScreen.tsx(253,11): error TS2322: Type '{ id: number; type: "travel"; date: string; startTime: string | undefined; endTime: string | undefined; projectName: string; category: string; notes: string; billable: true; status: string; fromLocation: string | undefined; toLocation: string | undefined; distance: string | undefined; duration: string | undefined; r...' is not assignable to type 'UnifiedLog[]'.
+  Type '{ id: number; type: "travel"; date: string; startTime: string | undefined; endTime: string | undefined; projectName: string; category: string; notes: string; billable: true; status: string; fromLocation: string | undefined; toLocation: string | undefined; distance: string | undefined; duration: string | undefined; r...' is not assignable to type 'UnifiedLog'.
+    Types of property 'startTime' are incompatible.
+      Type 'string | undefined' is not assignable to type 'string'.
+        Type 'undefined' is not assignable to type 'string'.
+src/screens/AttendanceScreen.tsx(419,9): error TS2353: Object literal may only specify known properties, and 'allowsBackgroundLocationUpdates' does not exist in type 'GeoWatchOptions'.
+src/screens/BillableTravelScreen.tsx(401,13): error TS2322: Type '"primary" | "danger"' is not assignable to type '"primary" | "secondary" | undefined'.
+  Type '"danger"' is not assignable to type '"primary" | "secondary" | undefined'.
+src/screens/extra.tsx(18,8): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(19,10): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(20,12): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(21,24): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(22,11): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(24,10): error TS2304: Cannot find name 'AnimatedCard'.
+src/screens/extra.tsx(25,12): error TS2304: Cannot find name 'TouchableOpacity'.
+src/screens/extra.tsx(30,14): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(31,16): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(32,18): error TS2304: Cannot find name 'Feather'.
+src/screens/extra.tsx(37,17): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(39,16): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(40,17): error TS2607: JSX element class does not support attributes because it does not have a 'props' property.
+src/screens/extra.tsx(40,18): error TS2786: 'Text' cannot be used as a JSX component.
+  Its type '{ new (data?: string | undefined): Text; prototype: Text; }' is not a valid JSX element type.
+    Type '{ new (data?: string | undefined): Text; prototype: Text; }' is not assignable to type 'new (props: any, context: any) => Component<any, any, any>'.
+      Type 'Text' is missing the following properties from type 'Component<any, any, any>': context, setState, forceUpdate, render, and 2 more.
+src/screens/extra.tsx(44,18): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(45,20): error TS2304: Cannot find name 'Feather'.
+src/screens/extra.tsx(50,19): error TS2607: JSX element class does not support attributes because it does not have a 'props' property.
+src/screens/extra.tsx(50,20): error TS2786: 'Text' cannot be used as a JSX component.
+  Its type '{ new (data?: string | undefined): Text; prototype: Text; }' is not a valid JSX element type.
+    Type '{ new (data?: string | undefined): Text; prototype: Text; }' is not assignable to type 'new (props: any, context: any) => Component<any, any, any>'.
+      Type 'Text' is missing the following properties from type 'Component<any, any, any>': context, setState, forceUpdate, render, and 2 more.
+src/screens/extra.tsx(53,19): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(54,17): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(55,15): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(57,14): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(58,16): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(59,18): error TS2304: Cannot find name 'Feather'.
+src/screens/extra.tsx(64,17): error TS2607: JSX element class does not support attributes because it does not have a 'props' property.
+src/screens/extra.tsx(64,18): error TS2786: 'Text' cannot be used as a JSX component.
+  Its type '{ new (data?: string | undefined): Text; prototype: Text; }' is not a valid JSX element type.
+    Type '{ new (data?: string | undefined): Text; prototype: Text; }' is not assignable to type 'new (props: any, context: any) => Component<any, any, any>'.
+      Type 'Text' is missing the following properties from type 'Component<any, any, any>': context, setState, forceUpdate, render, and 2 more.
+src/screens/extra.tsx(67,17): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(69,16): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(70,17): error TS2607: JSX element class does not support attributes because it does not have a 'props' property.
+src/screens/extra.tsx(70,18): error TS2786: 'Text' cannot be used as a JSX component.
+  Its type '{ new (data?: string | undefined): Text; prototype: Text; }' is not a valid JSX element type.
+    Type '{ new (data?: string | undefined): Text; prototype: Text; }' is not assignable to type 'new (props: any, context: any) => Component<any, any, any>'.
+      Type 'Text' is missing the following properties from type 'Component<any, any, any>': context, setState, forceUpdate, render, and 2 more.
+src/screens/extra.tsx(71,17): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(73,16): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(74,18): error TS2304: Cannot find name 'Feather'.
+src/screens/extra.tsx(79,17): error TS2607: JSX element class does not support attributes because it does not have a 'props' property.
+src/screens/extra.tsx(79,18): error TS2786: 'Text' cannot be used as a JSX component.
+  Its type '{ new (data?: string | undefined): Text; prototype: Text; }' is not a valid JSX element type.
+    Type '{ new (data?: string | undefined): Text; prototype: Text; }' is not assignable to type 'new (props: any, context: any) => Component<any, any, any>'.
+      Type 'Text' is missing the following properties from type 'Component<any, any, any>': context, setState, forceUpdate, render, and 2 more.
+src/screens/extra.tsx(80,17): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(83,18): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(84,20): error TS2304: Cannot find name 'Feather'.
+src/screens/extra.tsx(89,19): error TS2607: JSX element class does not support attributes because it does not have a 'props' property.
+src/screens/extra.tsx(89,20): error TS2786: 'Text' cannot be used as a JSX component.
+  Its type '{ new (data?: string | undefined): Text; prototype: Text; }' is not a valid JSX element type.
+    Type '{ new (data?: string | undefined): Text; prototype: Text; }' is not assignable to type 'new (props: any, context: any) => Component<any, any, any>'.
+      Type 'Text' is missing the following properties from type 'Component<any, any, any>': context, setState, forceUpdate, render, and 2 more.
+src/screens/extra.tsx(90,19): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(94,18): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(95,20): error TS2304: Cannot find name 'Feather'.
+src/screens/extra.tsx(100,19): error TS2607: JSX element class does not support attributes because it does not have a 'props' property.
+src/screens/extra.tsx(100,20): error TS2786: 'Text' cannot be used as a JSX component.
+  Its type '{ new (data?: string | undefined): Text; prototype: Text; }' is not a valid JSX element type.
+    Type '{ new (data?: string | undefined): Text; prototype: Text; }' is not assignable to type 'new (props: any, context: any) => Component<any, any, any>'.
+      Type 'Text' is missing the following properties from type 'Component<any, any, any>': context, setState, forceUpdate, render, and 2 more.
+src/screens/extra.tsx(101,19): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(103,15): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(105,28): error TS2607: JSX element class does not support attributes because it does not have a 'props' property.
+src/screens/extra.tsx(105,29): error TS2786: 'Text' cannot be used as a JSX component.
+  Its type '{ new (data?: string | undefined): Text; prototype: Text; }' is not a valid JSX element type.
+    Type '{ new (data?: string | undefined): Text; prototype: Text; }' is not assignable to type 'new (props: any, context: any) => Component<any, any, any>'.
+      Type 'Text' is missing the following properties from type 'Component<any, any, any>': context, setState, forceUpdate, render, and 2 more.
+src/screens/extra.tsx(106,13): error TS2304: Cannot find name 'TouchableOpacity'.
+src/screens/extra.tsx(109,14): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(110,16): error TS2304: Cannot find name 'TouchableOpacity'.
+src/screens/extra.tsx(114,18): error TS2304: Cannot find name 'Feather'.
+src/screens/extra.tsx(115,17): error TS2607: JSX element class does not support attributes because it does not have a 'props' property.
+src/screens/extra.tsx(115,18): error TS2786: 'Text' cannot be used as a JSX component.
+  Its type '{ new (data?: string | undefined): Text; prototype: Text; }' is not a valid JSX element type.
+    Type '{ new (data?: string | undefined): Text; prototype: Text; }' is not assignable to type 'new (props: any, context: any) => Component<any, any, any>'.
+      Type 'Text' is missing the following properties from type 'Component<any, any, any>': context, setState, forceUpdate, render, and 2 more.
+src/screens/extra.tsx(116,17): error TS2304: Cannot find name 'TouchableOpacity'.
+src/screens/extra.tsx(118,16): error TS2304: Cannot find name 'TouchableOpacity'.
+src/screens/extra.tsx(122,18): error TS2304: Cannot find name 'Feather'.
+src/screens/extra.tsx(123,17): error TS2607: JSX element class does not support attributes because it does not have a 'props' property.
+src/screens/extra.tsx(123,18): error TS2786: 'Text' cannot be used as a JSX component.
+  Its type '{ new (data?: string | undefined): Text; prototype: Text; }' is not a valid JSX element type.
+    Type '{ new (data?: string | undefined): Text; prototype: Text; }' is not assignable to type 'new (props: any, context: any) => Component<any, any, any>'.
+      Type 'Text' is missing the following properties from type 'Component<any, any, any>': context, setState, forceUpdate, render, and 2 more.
+src/screens/extra.tsx(124,17): error TS2304: Cannot find name 'TouchableOpacity'.
+src/screens/extra.tsx(125,15): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(127,11): error TS2304: Cannot find name 'AnimatedCard'.
+src/screens/extra.tsx(128,9): error TS2304: Cannot find name 'View'.
+src/screens/extra.tsx(133,2): error TS2304: Cannot find name 'FlatList'.
+src/screens/extra.tsx(134,9): error TS2304: Cannot find name 'previewLogs'.
+src/screens/extra.tsx(135,17): error TS7006: Parameter 'item' implicitly has an 'any' type.
+src/screens/extra.tsx(137,18): error TS7031: Binding element 'item' implicitly has an 'any' type.
+src/screens/extra.tsx(137,24): error TS7031: Binding element 'index' implicitly has an 'any' type.
+src/screens/extra.tsx(141,25): error TS2304: Cannot find name 'previewLogs'.
+src/screens/extra.tsx(142,19): error TS2304: Cannot find name 'expandedLogId'.
+src/screens/extra.tsx(143,21): error TS2304: Cannot find name 'toggleExpand'.
+src/screens/extra.tsx(144,19): error TS2304: Cannot find name 'handleEdit'.
+src/screens/extra.tsx(145,21): error TS2304: Cannot find name 'handleDelete'.
+src/screens/extra.tsx(146,14): error TS2304: Cannot find name 'theme'.
+src/screens/extra.tsx(147,15): error TS2304: Cannot find name 'styles'.
+src/screens/extra.tsx(148,24): error TS2304: Cannot find name 'getCategoryIcon'.
+src/screens/extra.tsx(149,24): error TS2304: Cannot find name 'getDurationText'.
+src/screens/extra.tsx(150,26): error TS2304: Cannot find name 'formatDisplayDate'.
+src/screens/extra.tsx(151,21): error TS2304: Cannot find name 'parseDateKey'.
+src/screens/TravelLogDetailScreen.tsx(388,21): error TS2322: Type '(el: MapMarker | null) => MapMarker | null' is not assignable to type 'Ref<MapMarker> | undefined'.
+  Type '(el: MapMarker | null) => MapMarker | null' is not assignable to type '(instance: MapMarker | null) => void | (() => VoidOrUndefinedOnly)'.
+    Type 'MapMarker | null' is not assignable to type 'void | (() => VoidOrUndefinedOnly)'.
+      Type 'null' is not assignable to type 'void | (() => VoidOrUndefinedOnly)'.
+src/screens/TravelLogDetailScreen.tsx(592,66): error TS2551: Property 'start_date_time' does not exist on type 'TravelLogEntry'. Did you mean 'start_date'?
+src/services/manualLogService.ts(466,5): error TS2322: Type 'string | null' is not assignable to type 'string | undefined'.
+  Type 'null' is not assignable to type 'string | undefined'.
+src/services/manualLogService.ts(467,5): error TS2322: Type 'string | null' is not assignable to type 'string | undefined'.
+  Type 'null' is not assignable to type 'string | undefined'.
+src/services/manualLogService.ts(474,5): error TS2322: Type 'string | null' is not assignable to type 'string | undefined'.
+  Type 'null' is not assignable to type 'string | undefined'.
+src/services/manualLogService.ts(475,5): error TS2322: Type 'string | null' is not assignable to type 'string | undefined'.
+  Type 'null' is not assignable to type 'string | undefined'.
+src/services/manualLogService.ts(476,5): error TS2322: Type 'string | null' is not assignable to type 'string | undefined'.
+  Type 'null' is not assignable to type 'string | undefined'.
+src/services/reportService.ts(343,33): error TS2339: Property 'reportDetail' does not exist on type '{ readonly login: "login"; readonly logout: "logout"; readonly getProjects: "get-project"; readonly createManualLog: "create-manual-log"; readonly travelLogCreate: "travel-log-create"; ... 11 more ...; readonly startBillable: "start-billable"; }'.
+test_api.ts(1,24): error TS2307: Cannot find module './src/types' or its corresponding type declarations.

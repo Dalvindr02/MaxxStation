@@ -204,7 +204,7 @@ const createLoginFormData = (
  const formData = new FormData();
  formData.append('email', email.trim());
  formData.append('password', password);
- formData.append('device_token', deviceToken);
+ formData.append('fcm_token', deviceToken);
 
  return formData;
 };
@@ -231,8 +231,14 @@ export const loginRequest = async (
   );
 
   const loginUrl = buildApiUrl(API_ENDPOINTS.login);
+  const loginPayloadParams = {
+   email: email.trim(),
+   password,
+   fcm_token: fcmToken,
+  };
+
   console.log('[Auth] Sending login request to:', loginUrl);
-  console.log('[Auth] Form data prepared with email:', email.trim());
+  console.log('[Auth] Login API payload params:', loginPayloadParams);
 
   let response;
   let lastError: any;
@@ -406,9 +412,11 @@ export type LogoutApiResult = {
 
 export const logoutRequest = async (
  token: string,
+ signal?: AbortSignal,
 ): Promise<LogoutApiResult> => {
  try {
   const response = await axios.get(buildApiUrl(API_ENDPOINTS.logout), {
+   signal,
    headers: {
     Authorization: `Bearer ${token}`,
     Accept: 'application/json',

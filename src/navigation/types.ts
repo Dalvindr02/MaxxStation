@@ -10,8 +10,11 @@ export type RootStackParamList = {
      mode?: 'billable' | 'manual';
      fromCoords?: {latitude: number; longitude: number} | null;
      toCoords?: {latitude: number; longitude: number} | null;
+     editLogId?: number | string;
+     editLogData?: LogEntry | import('../store/travelLogSlice').TravelLogEntry;
     }
   | undefined;
+ BillableTravel: undefined;
  AllLogs: undefined;
  LogDetailScreen: {log: any} | undefined;
  ReportList: undefined;

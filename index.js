@@ -12,7 +12,6 @@ import {name as appName} from './app.json';
 import {
  handleIncomingRemoteMessage,
  handleNotifeeBackgroundEvent,
- restoreShiftNotificationSchedulesFromStorage,
 } from './src/services/notificationService';
 
 messaging().setBackgroundMessageHandler(async remoteMessage => {
@@ -28,14 +27,6 @@ AppRegistry.registerHeadlessTask(
    remoteMessage?.messageId,
   );
   return handleIncomingRemoteMessage(remoteMessage);
- },
-);
-
-AppRegistry.registerHeadlessTask(
- 'ShiftNotificationResyncTask',
- () => async taskData => {
-  console.log('ShiftNotificationResyncTask invoked', taskData);
-  return restoreShiftNotificationSchedulesFromStorage();
  },
 );
 

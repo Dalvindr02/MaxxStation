@@ -1,13 +1,27 @@
+/**
+ * attendanceNotificationService.ts
+ *
+ * IMPORTANT — index.js SETUP REQUIRED:
+ * ------------------------------------
+ * For background / killed-state FCM to work you MUST add this to index.js
+ * BEFORE AppRegistry.registerComponent (do not remove it):
+ *
+ *   import messaging from '@react-native-firebase/messaging';
+ *   import { registerBackgroundMessageHandler } from './src/services/attendanceNotificationService';
+ *   registerBackgroundMessageHandler();
+ *
+ * Without that call FCM messages received while the app is backgrounded or
+ * killed are silently dropped by the OS and never reach the app.
+ */
+
 import {Linking, Platform} from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import notifee, {
- AlarmType,
  AndroidImportance,
  AndroidStyle,
  EventType,
  Event,
  Notification,
- TriggerType,
 } from '@notifee/react-native';
 import messaging, {
  FirebaseMessagingTypes,
@@ -15,9 +29,22 @@ import messaging, {
 import {SHIFT_WINDOW} from '../constants/shift';
 import {LocationStatus} from '../types/attendance';
 import {todayKey} from '../utils/date';
+import {
+ navigateToAttendanceTravelFromNotification,
+ requestAttendanceTravelNotificationNavigation,
+} from '../navigation/rootNavigation';
+import {BackendLocationReminder} from './attendanceLocationService';
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
 
 const CHANNEL_ID = 'maxxstation-alerts';
 const ANDROID_COLOR_HEX = '#2563EB';
+
+// ---------------------------------------------------------------------------
+// Module-level singletons
+// ---------------------------------------------------------------------------
 
 let channelPromise: Promise<string> | null = null;
 let permissionPromise: Promise<void> | null = null;
@@ -27,13 +54,22 @@ let foregroundListener: (() => void) | null = null;
 const activeNotifications = new Set<string>();
 const renderedPayloads = new Map<string, string>();
 
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
 export type NotificationActionId =
  | 'refresh-network'
  | 'refresh-location'
  | 'open-manual-card'
- | 'mark-presence'
  | 'open-report'
- | 'bill-time';
+ | 'bill-time'
+ | 'open-map'
+ | 'check-in';
+
+// ---------------------------------------------------------------------------
+// Event bus
+// ---------------------------------------------------------------------------
 
 class AttendanceEventBus {
  private listeners = new Map<NotificationActionId, Set<() => void>>();
@@ -72,9 +108,14 @@ class AttendanceEventBus {
 
 export const notificationEvents = new AttendanceEventBus();
 
+// ---------------------------------------------------------------------------
+// Snapshot type (kept for callers — shape unchanged)
+// ---------------------------------------------------------------------------
+
 export type AttendanceNotificationSnapshot = {
  offline: boolean;
  locationStatus: LocationStatus;
+ gpsUnavailable?: boolean;
  canMarkPresence: boolean;
  shiftHasStarted: boolean;
  shiftNearEnd: boolean;
@@ -85,42 +126,36 @@ export type AttendanceNotificationSnapshot = {
  minutesRemaining: number;
 };
 
+// ---------------------------------------------------------------------------
+// Notification key registry
+// Only two local notification keys remain active:
+//   • Offline  — internet unavailable
+//   • LocationPermission — GPS unavailable
+// BackendLocationReminder is kept so FCM payloads can reuse the same stable id
+// ---------------------------------------------------------------------------
+
 const NotificationKey = {
  Offline: 'offline-network',
  LocationPermission: 'location-permission',
  OutsideRadius: 'outside-radius',
- ShiftLive: 'shift-live',
- ShiftWrap: 'shift-wrap',
+ // Used as the stable id for backend-sent location reminders displayed via FCM
+ BackendLocationReminder: 'backend-location-reminder',
 } as const;
 
-const ScheduledNotificationKey = {
- ShiftStart: 'scheduled-shift-start',
- ShiftWrap: 'scheduled-shift-wrap',
-} as const;
+// All legacy local notification ids that were created before the cleanup.
+// They are cancelled once on app init so stale banners are cleared from the
+// notification tray immediately.
+const obsoleteLocalNotificationIds: string[] = [
+ 'shift-live',
+ 'shift-wrap',
+ 'scheduled-shift-start',
+ 'scheduled-shift-wrap',
+ ...Array.from({length: 4}, (_, i) => `scheduled-shift-action-${i}`),
+];
 
-type ShiftNotificationSource = Record<string, unknown> | null | undefined;
-type ShiftReminderState = {
- isAuthenticated: boolean;
- isOnline: boolean;
- hasManualEntry: boolean;
- shiftStart: string;
- shiftEnd: string;
- wrapReminderMinutes: number;
- dateKey: string;
-};
-
-const ShiftActionNotificationKey = {
- Prefix: 'scheduled-shift-action',
-} as const;
-
-const SHIFT_REMINDER_STATE_STORAGE_KEY = 'shift_reminder_state_v1';
-const ATTENDANCE_STORAGE_KEY = 'attendance_entries_v1';
-const SHIFT_ACTION_REMINDER_COUNT = 4;
-const SHIFT_ACTION_REMINDER_INTERVAL_MINUTES = 5;
-const ANDROID_TEST_SHIFT_OVERRIDE =
- Platform.OS === 'android'
-  ? {shiftStart: '09:00', shiftEnd: '18:00', wrapReminderMinutes: 5}
-  : null;
+// ---------------------------------------------------------------------------
+// Internal types
+// ---------------------------------------------------------------------------
 
 type AttendanceAction = {
  id: string;
@@ -131,15 +166,97 @@ type AttendanceNotificationContent = {
  title: string;
  body: string;
  actions?: AttendanceAction[];
+ categoryId?: string;
+};
+
+type ShiftNotificationSource = Record<string, unknown> | null | undefined;
+
+type ShiftReminderState = {
+ isAuthenticated: boolean;
+ isOnline: boolean;
+ hasManualEntry: boolean;
+ shiftStart: string;
+ shiftEnd: string;
+ wrapReminderMinutes: number;
+ dateKey: string;
+};
+
+// ---------------------------------------------------------------------------
+// Storage keys
+// ---------------------------------------------------------------------------
+
+const SHIFT_REMINDER_STATE_STORAGE_KEY = 'shift_reminder_state_v1';
+const ATTENDANCE_STORAGE_KEY = 'attendance_entries_v1';
+
+// ---------------------------------------------------------------------------
+// Helpers — type guards
+// ---------------------------------------------------------------------------
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+ Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const isNonEmptyString = (value: unknown): value is string =>
+ typeof value === 'string' && value.trim().length > 0;
+
+const hasMessagingPermission = (status: number) =>
+ status === messaging.AuthorizationStatus.AUTHORIZED ||
+ status === messaging.AuthorizationStatus.PROVISIONAL;
+
+// ---------------------------------------------------------------------------
+// Helpers — action normalisation
+// ---------------------------------------------------------------------------
+
+const normalizeBackendLocationActions = (
+ reminder: BackendLocationReminder,
+): AttendanceAction[] => {
+ const backendActions = [
+  {id: reminder.action_1, label: reminder.action_1_title},
+  {id: reminder.action_2, label: reminder.action_2_title},
+  {id: reminder.action_3, label: reminder.action_3_title},
+ ].reduce<AttendanceAction[]>((actions, action) => {
+  if (action.id === 'OPEN_MAP') {
+   actions.push({id: 'open-map', label: action.label || 'Start Billable'});
+  }
+  if (action.id === 'IGNORE') {
+   actions.push({id: 'IGNORE', label: action.label || 'Ignore'});
+  }
+  return actions;
+ }, []);
+
+ return backendActions.length
+  ? backendActions
+  : [
+     {id: 'open-map', label: 'Start Billable'},
+     {id: 'IGNORE', label: 'Ignore'},
+    ];
+};
+
+const hasBackendLocationReminderActions = (
+ reminder: BackendLocationReminder,
+) => {
+ const values = [
+  reminder.type,
+  reminder.action_1,
+  reminder.action_2,
+  reminder.action_3,
+ ].map(value => (typeof value === 'string' ? value.toUpperCase() : ''));
+
+ return (
+  reminder.type === 'location_reminder' ||
+  values.includes('CHECK_IN') ||
+  values.includes('OPEN_MAP') ||
+  values.includes('IGNORE')
+ );
 };
 
 const interactiveActions: NotificationActionId[] = [
  'refresh-network',
  'refresh-location',
  'open-manual-card',
- 'mark-presence',
  'open-report',
  'bill-time',
+ 'open-map',
+ 'check-in',
 ];
 
 const isInteractiveAction = (
@@ -147,15 +264,9 @@ const isInteractiveAction = (
 ): value is NotificationActionId =>
  Boolean(value && interactiveActions.includes(value as NotificationActionId));
 
-const hasMessagingPermission = (status: number) =>
- status === messaging.AuthorizationStatus.AUTHORIZED ||
- status === messaging.AuthorizationStatus.PROVISIONAL;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
- Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-
-const isNonEmptyString = (value: unknown): value is string =>
- typeof value === 'string' && value.trim().length > 0;
+// ---------------------------------------------------------------------------
+// Helpers — shift schedule (kept for syncShiftNotificationSchedule callers)
+// ---------------------------------------------------------------------------
 
 const findFirstString = (
  payload: ShiftNotificationSource,
@@ -164,14 +275,12 @@ const findFirstString = (
  if (!isRecord(payload)) {
   return null;
  }
-
  for (const key of keys) {
   const value = payload[key];
   if (typeof value === 'string' && value.trim()) {
    return value.trim();
   }
  }
-
  for (const value of Object.values(payload)) {
   if (isRecord(value)) {
    const nestedValue = findFirstString(value, keys);
@@ -180,7 +289,6 @@ const findFirstString = (
    }
   }
  }
-
  return null;
 };
 
@@ -188,7 +296,6 @@ const normalizeTimeForSchedule = (value?: string | null) => {
  if (!value) {
   return null;
  }
-
  const normalized = value.trim().toUpperCase().replace(/\s+/g, ' ');
  const twelveHourMatch = normalized.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/);
  if (twelveHourMatch) {
@@ -205,19 +312,16 @@ const normalizeTimeForSchedule = (value?: string | null) => {
   ) {
    return null;
   }
-
   const hour24 = meridiem === 'PM' ? (parsedHour % 12) + 12 : parsedHour % 12;
   return `${String(hour24).padStart(2, '0')}:${String(parsedMinute).padStart(
    2,
    '0',
   )}`;
  }
-
  const twentyFourHourMatch = normalized.match(/^(\d{1,2}):(\d{2})$/);
  if (!twentyFourHourMatch) {
   return null;
  }
-
  const parsedHour = Number(twentyFourHourMatch[1]);
  const parsedMinute = Number(twentyFourHourMatch[2]);
  if (
@@ -230,7 +334,6 @@ const normalizeTimeForSchedule = (value?: string | null) => {
  ) {
   return null;
  }
-
  return `${String(parsedHour).padStart(2, '0')}:${String(parsedMinute).padStart(
   2,
   '0',
@@ -241,16 +344,6 @@ const resolveShiftSchedule = (
  loginData?: ShiftNotificationSource,
  user?: ShiftNotificationSource,
 ) => {
- if (ANDROID_TEST_SHIFT_OVERRIDE) {
-  return {
-   shiftStart: ANDROID_TEST_SHIFT_OVERRIDE.shiftStart,
-   shiftEnd: ANDROID_TEST_SHIFT_OVERRIDE.shiftEnd,
-   wrapReminderMinutes:
-    ANDROID_TEST_SHIFT_OVERRIDE.wrapReminderMinutes ??
-    SHIFT_WINDOW.wrapReminderMinutes,
-  };
- }
-
  const source = user ?? loginData;
  const shiftStart =
   normalizeTimeForSchedule(
@@ -265,7 +358,6 @@ const resolveShiftSchedule = (
   normalizeTimeForSchedule(
    findFirstString(source, ['shift_end', 'shiftEnd', 'end_time', 'end']),
   ) ?? SHIFT_WINDOW.end;
-
  return {
   shiftStart,
   shiftEnd,
@@ -273,14 +365,14 @@ const resolveShiftSchedule = (
  };
 };
 
-const getShiftActionNotificationId = (index: number) =>
- `${ShiftActionNotificationKey.Prefix}-${index}`;
+// ---------------------------------------------------------------------------
+// Helpers — persisted state
+// ---------------------------------------------------------------------------
 
 const parsePersistedAuthState = (value: string | null) => {
  if (!value) {
   return null;
  }
-
  try {
   const parsed = JSON.parse(value) as Record<string, unknown>;
   return {
@@ -302,7 +394,6 @@ const loadPersistedAttendanceEntries = async () => {
   if (!raw) {
    return [];
   }
-
   const parsed = JSON.parse(raw);
   return Array.isArray(parsed) ? parsed : [];
  } catch (error) {
@@ -328,19 +419,16 @@ const readShiftReminderState = async (): Promise<ShiftReminderState | null> => {
   if (!raw) {
    return null;
   }
-
   const parsed = JSON.parse(raw);
   if (!isRecord(parsed)) {
    return null;
   }
-
   const shiftStart = normalizeTimeForSchedule(
    isNonEmptyString(parsed.shiftStart) ? parsed.shiftStart : null,
   );
   const shiftEnd = normalizeTimeForSchedule(
    isNonEmptyString(parsed.shiftEnd) ? parsed.shiftEnd : null,
   );
-
   return {
    isAuthenticated: parsed.isAuthenticated === true,
    isOnline: parsed.isOnline === true,
@@ -382,7 +470,6 @@ const buildMergedShiftReminderState = async (
   persistedAuthState?.loginData,
   persistedAuthState?.user,
  );
-
  return {
   isAuthenticated:
    updates.isAuthenticated ??
@@ -406,40 +493,41 @@ const buildMergedShiftReminderState = async (
  };
 };
 
-const buildReminderMessage = (state: ShiftReminderState) => {
- if (!state.isOnline) {
-  return 'Your shift has started. Please turn on your internet.';
- }
+// ---------------------------------------------------------------------------
+// Platform setup — permissions & channel
+// ---------------------------------------------------------------------------
 
- if (!state.isAuthenticated && !state.hasManualEntry) {
-  return 'Your shift has started. Please log in or add manual entry.';
+export const getFcmToken = async () => {
+ try {
+  const token = await messaging().getToken();
+  console.log('[FCM] Current Device Token:', token);
+  return token;
+ } catch (error) {
+  console.warn('[FCM] Failed to get token:', error);
+  return null;
  }
-
- return null;
 };
 
-const parseDateKeyAndTime = (dateKey: string, time: string) => {
- const [year, month, day] = dateKey.split('-').map(Number);
- const [hour, minute] = time.split(':').map(Number);
+export const checkNotificationStatus = async () => {
+ console.log('[Notification] Checking status...');
+ const settings = await notifee.getNotificationSettings();
+ console.log('[Notification] Notifee Settings:', settings);
 
- return new Date(
-  year,
-  (month || 1) - 1,
-  day || 1,
-  hour || 0,
-  minute || 0,
-  0,
-  0,
- );
+ const authStatus = await messaging().hasPermission();
+ console.log('[FCM] Auth Status:', authStatus);
+
+ const token = await getFcmToken();
+ return {settings, authStatus, token};
 };
 
 const ensurePermissions = async () => {
  if (!permissionPromise) {
   permissionPromise = (async () => {
+   console.log('[Notification] Requesting permissions...');
    try {
     await notifee.requestPermission();
    } catch (error) {
-    console.warn('Notifee permission request failed', error);
+    console.warn('[Notification] Notifee permission request failed', error);
    }
 
    let permissionStatus = messaging.AuthorizationStatus.NOT_DETERMINED;
@@ -452,12 +540,14 @@ const ensurePermissions = async () => {
      permissionStatus = await messaging().requestPermission();
     }
    } catch (error) {
-    console.warn('Unable to verify messaging permission', error);
+    console.warn('[FCM] Unable to verify messaging permission', error);
    }
+
+   console.log('[FCM] Permission status:', permissionStatus);
 
    if (!hasMessagingPermission(permissionStatus)) {
     console.log(
-     'Skipping FCM registration because notification permission is not granted on this device.',
+     '[FCM] Skipping registration — notification permission not granted.',
     );
     return;
    }
@@ -468,21 +558,16 @@ const ensurePermissions = async () => {
    ) {
     try {
      await messaging().registerDeviceForRemoteMessages();
+     console.log('[FCM] iOS device registered for remote messages');
     } catch (error) {
-     console.warn('Failed to register for remote messages', error);
+     console.warn('[FCM] Failed to register for remote messages', error);
      return;
     }
    }
 
-   try {
-    const token = await messaging().getToken();
-    console.log('Firebase messaging token', token);
-   } catch (error) {
-    console.warn('Unable to fetch FCM token', error);
-   }
+   await getFcmToken();
   })();
  }
-
  return permissionPromise;
 };
 
@@ -497,7 +582,6 @@ const ensureChannel = async () => {
    vibration: true,
   });
  }
-
  return channelPromise;
 };
 
@@ -510,289 +594,31 @@ const ensureReady = async () => {
  await ensureChannel();
 };
 
-const buildScheduledNotificationPayload = (
- id: string,
- title: string,
- body: string,
- actions?: AttendanceAction[],
-) => ({
- id,
- title,
- body,
- android: {
-  channelId: CHANNEL_ID,
-  smallIcon: 'ic_launcher',
-  color: ANDROID_COLOR_HEX,
-  largeIcon: 'ic_launcher',
-  pressAction: {id: 'open-app'},
-  style: {type: AndroidStyle.BIGTEXT, text: body},
-  importance: AndroidImportance.HIGH,
-  actions: actions?.map(action => ({
-   title: action.label,
-   pressAction: {id: action.id},
-  })),
- },
- ios: {
-  sound: 'default',
-  categoryId: 'attendance',
- },
- data: {
-  scheduledNotification: id,
- },
-});
-
-export const scheduleNotificationTrigger = async (
- id: string,
- title: string,
- body: string,
- timestamp: number,
- actions?: AttendanceAction[],
-) => {
- if (timestamp <= Date.now()) {
-  console.log(
-   'Skipping notification trigger because timestamp is in the past',
-   {
-    id,
-    timestamp,
-   },
-  );
-  return;
- }
- await ensureReady();
- await notifee.cancelNotification(id);
- try {
-  await notifee.createTriggerNotification(
-   buildScheduledNotificationPayload(id, title, body, actions) as any,
-   {
-    type: TriggerType.TIMESTAMP,
-    timestamp,
-    ...(Platform.OS === 'android'
-     ? {
-        alarmManager: {
-         type: AlarmType.SET_EXACT_AND_ALLOW_WHILE_IDLE,
-        },
-       }
-     : {}),
-   } as any,
-  );
-  console.log('Scheduled notification trigger', {
-   id,
-   title,
-   timestamp,
-   scheduledFor: new Date(timestamp).toISOString(),
-  });
- } catch (error) {
-  console.warn('Failed to schedule exact trigger notification', id, error);
-  if (Platform.OS !== 'android') {
-   throw error;
-  }
-
-  await notifee.createTriggerNotification(
-   buildScheduledNotificationPayload(id, title, body, actions) as any,
-   {
-    type: TriggerType.TIMESTAMP,
-    timestamp,
-   } as any,
-  );
-  console.log('Scheduled fallback trigger notification', {
-   id,
-   title,
-   timestamp,
-   scheduledFor: new Date(timestamp).toISOString(),
-  });
- }
-};
-
-export const cancelScheduledNotification = async (id: string) => {
- await ensureReady();
- try {
-  await notifee.cancelNotification(id);
- } catch (error) {
-  console.warn('Unable to cancel scheduled notification', id, error);
- }
-};
-
-const parseTimeToToday = (time: string) => {
- const [hour, minute] = time.split(':').map(Number);
- const now = new Date();
- return new Date(
-  now.getFullYear(),
-  now.getMonth(),
-  now.getDate(),
-  hour,
-  minute,
-  0,
-  0,
- );
-};
-
-export const scheduleTodayShiftNotifications = async (
- shiftStart: string,
- shiftEnd: string,
- wrapReminderMinutes: number,
-) => {
- const now = Date.now();
- const endDate = parseTimeToToday(shiftEnd);
- const wrapDate = new Date(endDate.getTime() - wrapReminderMinutes * 60000);
- await cancelScheduledNotification(ScheduledNotificationKey.ShiftStart);
-
- if (wrapDate.getTime() > now && wrapDate.getTime() < endDate.getTime()) {
-  await scheduleNotificationTrigger(
-   ScheduledNotificationKey.ShiftWrap,
-   'Shift ending soon',
-   `You have ${wrapReminderMinutes} minutes left in your shift. Wrap up logs or submit your report.`,
-   wrapDate.getTime(),
-   [{id: 'open-report', label: 'Open report'}],
-  );
- } else {
-  await cancelScheduledNotification(ScheduledNotificationKey.ShiftWrap);
- }
-};
-
-export const cancelShiftActionNotifications = async () => {
- await ensureReady();
- await Promise.all(
-  Array.from({length: SHIFT_ACTION_REMINDER_COUNT}, (_, index) =>
-   cancelScheduledNotification(getShiftActionNotificationId(index)),
-  ),
- );
-};
-
-export const syncShiftActionNotifications = async (
- updates: Partial<ShiftReminderState> = {},
-) => {
- const state = await buildMergedShiftReminderState(updates);
- await writeShiftReminderState(state);
-
- const message = buildReminderMessage(state);
- if (!message) {
-  await cancelShiftActionNotifications();
-  return;
- }
-
- const shiftStartDate = parseDateKeyAndTime(state.dateKey, state.shiftStart);
- const shiftStartTimestamp = shiftStartDate.getTime();
- if (Number.isNaN(shiftStartTimestamp)) {
-  console.warn('Unable to schedule shift action notifications', state);
-  return;
- }
-
- const now = Date.now();
- const shiftEndTimestamp = parseDateKeyAndTime(
-  state.dateKey,
-  state.shiftEnd,
- ).getTime();
- const firstReminderTimestamp =
-  now > shiftStartTimestamp
-   ? now + SHIFT_ACTION_REMINDER_INTERVAL_MINUTES * 60 * 1000
-   : shiftStartTimestamp;
-
- if (firstReminderTimestamp >= shiftEndTimestamp) {
-  await cancelShiftActionNotifications();
-  return;
- }
-
- const reminderTimestamps = Array.from(
-  {length: SHIFT_ACTION_REMINDER_COUNT},
-  (_, index) =>
-   firstReminderTimestamp +
-   index * SHIFT_ACTION_REMINDER_INTERVAL_MINUTES * 60 * 1000,
- );
- const latestReminderTimestamp =
-  reminderTimestamps[reminderTimestamps.length - 1] ?? firstReminderTimestamp;
- if (Date.now() > latestReminderTimestamp) {
-  await cancelShiftActionNotifications();
-  return;
- }
-
- await Promise.all(
-  reminderTimestamps.map((timestamp, index) =>
-   scheduleNotificationTrigger(
-    getShiftActionNotificationId(index),
-    'Shift started',
-    message,
-    timestamp,
-    [{id: 'open-report', label: 'Open app'}],
-   ),
-  ),
- );
-};
-
-export const restoreShiftNotificationSchedulesFromStorage = async () => {
- const state = await buildMergedShiftReminderState();
- await writeShiftReminderState(state);
- if (state.isAuthenticated) {
-  await scheduleTodayShiftNotifications(
-   state.shiftStart,
-   state.shiftEnd,
-   state.wrapReminderMinutes,
-  );
- } else {
-  await cancelScheduledNotification(ScheduledNotificationKey.ShiftWrap);
- }
- await syncShiftActionNotifications(state);
-};
-
-export const syncShiftNotificationSchedule = async (options: {
- isAuthenticated: boolean;
- loginData?: ShiftNotificationSource;
- user?: ShiftNotificationSource;
-}) => {
- const {shiftStart, shiftEnd, wrapReminderMinutes} = resolveShiftSchedule(
-  options.loginData,
-  options.user,
- );
-
- if (options.isAuthenticated) {
-  await scheduleTodayShiftNotifications(
-   shiftStart,
-   shiftEnd,
-   wrapReminderMinutes,
-  );
- } else {
-  await cancelScheduledNotification(ScheduledNotificationKey.ShiftWrap);
- }
- await syncShiftActionNotifications({
-  isAuthenticated: options.isAuthenticated,
-  shiftStart,
-  shiftEnd,
-  wrapReminderMinutes,
-  dateKey: todayKey(),
- });
-};
-
-export const initializeNotificationPipeline = async () => {
- await ensureReady();
- await notifee.setNotificationCategories([
-  {
-   id: 'attendance',
-   actions: [
-    {id: 'mark-presence', title: 'Mark Presence'},
-    {id: 'refresh-location', title: 'Refresh GPS'},
-    {id: 'open-manual-card', title: 'Manual Pin'},
-    {id: 'bill-time', title: 'Bill travel time', foreground: true},
-    {id: 'refresh-network', title: 'Retry Connection'},
-    {id: 'open-report', title: 'Open Report', foreground: true},
-    {id: 'open-settings', title: 'Settings', foreground: true},
-   ],
-  },
- ]);
-
- messageUnsubscribe?.();
- foregroundListener?.();
-
- messageUnsubscribe = messaging().onMessage(handleIncomingRemoteMessage);
- foregroundListener = notifee.onForegroundEvent(async event => {
-  await handleNotifeeForegroundEvent(event);
- });
-
- messaging().onTokenRefresh(token => {
-  console.log('Firebase messaging token refreshed', token);
- });
-};
+// ---------------------------------------------------------------------------
+// Notification display / dismiss primitives
+// ---------------------------------------------------------------------------
 
 const buildSignature = (payload: AttendanceNotificationContent) =>
- JSON.stringify({title: payload.title, body: payload.body});
+ JSON.stringify({
+  title: payload.title,
+  body: payload.body,
+  actions: payload.actions,
+  categoryId: payload.categoryId,
+ });
+
+export const displayTestNotification = async () => {
+ await ensureReady();
+ const channelId = await ensureChannel();
+ await notifee.displayNotification({
+  title: 'Test Notification',
+  body: 'If you see this, Notifee is working correctly.',
+  android: {
+   channelId,
+   smallIcon: 'ic_launcher',
+   importance: AndroidImportance.HIGH,
+  },
+ });
+};
 
 const displayAttendanceNotification = async (
  key: string,
@@ -801,8 +627,15 @@ const displayAttendanceNotification = async (
  await ensureReady();
  const signature = buildSignature(payload);
  if (renderedPayloads.get(key) === signature) {
+  console.log('[Notification] Skipping duplicate:', key);
   return;
  }
+
+ console.log('[Notification] Displaying:', key, {
+  title: payload.title,
+  body: payload.body,
+  actions: payload.actions?.map(a => ({id: a.id, label: a.label})),
+ });
 
  renderedPayloads.set(key, signature);
  activeNotifications.add(key);
@@ -822,23 +655,21 @@ const displayAttendanceNotification = async (
    importance: AndroidImportance.HIGH,
    actions: payload.actions?.map(action => ({
     title: action.label,
-    pressAction: {id: action.id},
+    pressAction:
+     action.id === 'open-map' || action.id === 'check-in'
+      ? {id: action.id, launchActivity: 'default'}
+      : {id: action.id},
    })),
   },
   ios: {
    sound: 'default',
-   categoryId: 'attendance',
+   categoryId: payload.categoryId ?? 'essential-local',
   },
-  data: {
-   notificationKey: key,
-  },
+  data: {notificationKey: key},
  });
 };
 
 const dismissAttendanceNotification = async (key: string) => {
- if (!activeNotifications.has(key)) {
-  return;
- }
  renderedPayloads.delete(key);
  activeNotifications.delete(key);
  try {
@@ -848,162 +679,354 @@ const dismissAttendanceNotification = async (key: string) => {
  }
 };
 
-const formatMinutes = (minutes: number) => {
- if (minutes <= 0) return 'now';
- if (minutes === 1) return '1 minute';
- return `${minutes} minutes`;
+const cleanupObsoleteLocalNotifications = async () => {
+ await ensureReady();
+ console.log(
+  '[Notification] Cancelling obsolete local notification ids:',
+  obsoleteLocalNotificationIds,
+ );
+ await Promise.all(
+  obsoleteLocalNotificationIds.map(id => dismissAttendanceNotification(id)),
+ );
+};
+
+// ---------------------------------------------------------------------------
+// FIX 1 — Background message handler registration
+//
+// This function MUST be called from index.js BEFORE AppRegistry.registerComponent.
+// It registers the handler that processes FCM messages when the app is
+// backgrounded or killed. Without it those messages are silently discarded.
+// ---------------------------------------------------------------------------
+
+export const registerBackgroundMessageHandler = () => {
+ messaging().setBackgroundMessageHandler(async remoteMessage => {
+  console.log('[FCM] Background message received:', remoteMessage?.messageId);
+  await handleIncomingRemoteMessage(remoteMessage);
+ });
+};
+
+// ---------------------------------------------------------------------------
+// Public exports — shift schedule sync (API unchanged for callers)
+// ---------------------------------------------------------------------------
+
+export const cancelScheduledNotification = async (id: string) => {
+ await ensureReady();
+ try {
+  await notifee.cancelNotification(id);
+ } catch (error) {
+  console.warn('Unable to cancel scheduled notification', id, error);
+ }
+};
+
+export const syncShiftActionNotifications = async (
+ updates: Partial<ShiftReminderState> = {},
+) => {
+ const state = await buildMergedShiftReminderState(updates);
+ await writeShiftReminderState(state);
+};
+
+export const restoreShiftNotificationSchedulesFromStorage = async () => {
+ const state = await buildMergedShiftReminderState();
+ await writeShiftReminderState(state);
+ await cleanupObsoleteLocalNotifications();
+};
+
+export const syncShiftNotificationSchedule = async (options: {
+ isAuthenticated: boolean;
+ loginData?: ShiftNotificationSource;
+ user?: ShiftNotificationSource;
+}) => {
+ const {shiftStart, shiftEnd, wrapReminderMinutes} = resolveShiftSchedule(
+  options.loginData,
+  options.user,
+ );
+ await cleanupObsoleteLocalNotifications();
+ await syncShiftActionNotifications({
+  isAuthenticated: options.isAuthenticated,
+  shiftStart,
+  shiftEnd,
+  wrapReminderMinutes,
+  dateKey: todayKey(),
+ });
+};
+
+// ---------------------------------------------------------------------------
+// Pipeline init
+// FIX 2 — setBackgroundMessageHandler is also called here as a safety net
+// in case registerBackgroundMessageHandler was not called from index.js
+// ---------------------------------------------------------------------------
+
+export const initializeNotificationPipeline = async () => {
+ await ensureReady();
+ await cleanupObsoleteLocalNotifications();
+
+ // iOS notification categories
+ await notifee.setNotificationCategories([
+  {
+   id: 'essential-local',
+   actions: [
+    {id: 'refresh-location', title: 'Refresh GPS'},
+    {id: 'refresh-network', title: 'Retry Connection'},
+    {id: 'open-settings', title: 'Settings', foreground: true},
+   ],
+  },
+  {
+   id: 'backend-location-reminder',
+   actions: [
+    {id: 'check-in', title: 'Check In', foreground: true},
+    {id: 'open-map', title: 'Open Map', foreground: true},
+    {id: 'IGNORE', title: 'Ignore'},
+   ],
+  },
+ ]);
+
+ // Tear down previous listeners before re-attaching (handles hot reload / re-init)
+ messageUnsubscribe?.();
+ foregroundListener?.();
+
+ // FIX 2a — foreground FCM listener
+ messageUnsubscribe = messaging().onMessage(async remoteMessage => {
+  console.log('[FCM] Foreground message received:', remoteMessage?.messageId);
+  await handleIncomingRemoteMessage(remoteMessage);
+ });
+
+ // FIX 2b — background FCM handler (safety net if index.js call is missing)
+ messaging().setBackgroundMessageHandler(async remoteMessage => {
+  console.log('[FCM] Background message received:', remoteMessage?.messageId);
+  await handleIncomingRemoteMessage(remoteMessage);
+ });
+
+ // Foreground notifee event listener
+ foregroundListener = notifee.onForegroundEvent(async event => {
+  await handleNotifeeForegroundEvent(event);
+ });
+
+ // Handle tap on notification that cold-started the app
+ notifee
+  .getInitialNotification()
+  .then(initialNotification => {
+   const actionId = initialNotification?.pressAction?.id;
+   if (actionId) {
+    processNotificationAction(actionId, initialNotification.notification).catch(
+     error => console.warn('Initial notification action failed', error),
+    );
+   }
+  })
+  .catch(error => console.warn('Unable to read initial notification', error));
+
+ messaging().onTokenRefresh(token => {
+  console.log('[FCM] Token refreshed:', token);
+ });
+};
+
+// ---------------------------------------------------------------------------
+// Essential local notifications — only Internet OFF and GPS OFF remain
+// ---------------------------------------------------------------------------
+
+export const syncEssentialLocalNotifications = async ({
+ offline,
+ gpsUnavailable,
+}: {
+ offline?: boolean;
+ gpsUnavailable?: boolean;
+}) => {
+ if (typeof offline === 'boolean') {
+  if (offline) {
+   await displayAttendanceNotification(NotificationKey.Offline, {
+    title: 'Internet unavailable',
+    body:
+     'Your device is offline. Some app data may not sync until internet is restored.',
+    actions: [{id: 'refresh-network', label: 'Retry'}],
+    categoryId: 'essential-local',
+   });
+  } else {
+   await dismissAttendanceNotification(NotificationKey.Offline);
+  }
+ }
+
+ if (typeof gpsUnavailable === 'boolean') {
+  if (gpsUnavailable) {
+   await displayAttendanceNotification(NotificationKey.LocationPermission, {
+    title: 'GPS unavailable',
+    body: 'Enable GPS/location access to complete attendance.',
+    actions: [
+     {id: 'open-settings', label: 'Settings'},
+     {id: 'refresh-location', label: 'Retry'},
+    ],
+    categoryId: 'essential-local',
+   });
+  } else {
+   await dismissAttendanceNotification(NotificationKey.LocationPermission);
+  }
+ }
 };
 
 export const syncAttendanceNotifications = async (
  snapshot: AttendanceNotificationSnapshot,
 ) => {
- const showOffline = snapshot.offline;
- if (showOffline) {
-  const body = snapshot.shiftHasStarted
-   ? 'You are offline during your shift. Add a manual travel log or retry connection to sync later.'
-   : 'You are offline. Attendance, logs, and reports will sync automatically when connectivity is restored.';
-  const actions = snapshot.shiftHasStarted
-   ? [
-      {id: 'open-manual-card', label: 'Open manual log'},
-      {id: 'refresh-network', label: 'Retry'},
-     ]
-   : [{id: 'refresh-network', label: 'Retry'}];
-
-  await displayAttendanceNotification(NotificationKey.Offline, {
-   title: 'You are offline',
-   body,
-   actions,
-  });
- } else {
-  await dismissAttendanceNotification(NotificationKey.Offline);
- }
-
- const showLocationPermission =
-  snapshot.locationStatus === 'denied' || snapshot.locationStatus === 'error';
- if (showLocationPermission) {
-  const detail =
-   snapshot.locationStatus === 'denied'
-    ? 'Enable location access to complete attendance.'
-    : 'Unable to acquire GPS lock. Try again from an open area.';
-  await displayAttendanceNotification(NotificationKey.LocationPermission, {
-   title: 'Location services required',
-   body: detail,
-   actions: [
-    {id: 'open-settings', label: 'Settings'},
-    {id: 'refresh-location', label: 'Retry'},
-   ],
-  });
- } else {
-  await dismissAttendanceNotification(NotificationKey.LocationPermission);
- }
-
- const showOutside = snapshot.locationStatus === 'outside';
- if (showOutside) {
-  const title = snapshot.shiftHasStarted
-   ? 'You are outside the office boundary'
-   : 'Outside mapped location';
-  const body = snapshot.shiftHasStarted
-   ? 'You have left the work location during shift. Bill this travel time or add a manual pin.'
-   : 'Move within the geofence or add a manual pin for today.';
-  const actions = snapshot.shiftHasStarted
-   ? [
-      {id: 'bill-time', label: 'Bill travel time'},
-      {id: 'open-manual-card', label: 'Add Manual Pin'},
-      {id: 'refresh-location', label: 'Refresh GPS'},
-     ]
-   : [
-      {id: 'open-manual-card', label: 'Add Manual Pin'},
-      {id: 'refresh-location', label: 'Refresh GPS'},
-     ];
-
-  await displayAttendanceNotification(NotificationKey.OutsideRadius, {
-   title,
-   body,
-   actions,
-  });
- } else {
-  await dismissAttendanceNotification(NotificationKey.OutsideRadius);
- }
-
- const showShiftLive = snapshot.shiftHasStarted && !snapshot.hasMarkedIn;
- if (showShiftLive) {
-  const clockBody = snapshot.canMarkPresence
-   ? `Mark presence ${
-      snapshot.graceRemaining > 0
-       ? `within ${formatMinutes(snapshot.graceRemaining)}`
-       : 'now to avoid a late flag'
-     }.`
-   : 'Reach the mapped site or drop a manual pin to continue.';
-  await displayAttendanceNotification(NotificationKey.ShiftLive, {
-   title: 'Shift is live',
-   body: clockBody,
-   actions: [{id: 'mark-presence', label: 'Mark Now'}],
-  });
- } else {
-  await dismissAttendanceNotification(NotificationKey.ShiftLive);
- }
-
- const showWrap =
-  (snapshot.shiftNearEnd || snapshot.shiftEnded) &&
-  snapshot.hasMarkedIn &&
-  !snapshot.hasMarkedOut;
- if (showWrap) {
-  const body = snapshot.shiftEnded
-   ? 'Shift has ended. Wrap your logs and submit the E.O.D report.'
-   : `About ${formatMinutes(
-      snapshot.minutesRemaining,
-     )} left in your shift. Start wrapping up.`;
-  await displayAttendanceNotification(NotificationKey.ShiftWrap, {
-   title: snapshot.shiftEnded ? 'Shift ended' : 'Shift ending soon',
-   body,
-   actions: [{id: 'open-report', label: 'Open Report'}],
-  });
- } else {
-  await dismissAttendanceNotification(NotificationKey.ShiftWrap);
- }
+ await syncEssentialLocalNotifications({
+  offline: snapshot.offline,
+  gpsUnavailable:
+   snapshot.gpsUnavailable ?? snapshot.locationStatus === 'denied',
+ });
 };
+
+// ---------------------------------------------------------------------------
+// Backend location reminder — display / dismiss driven by the server
+// ---------------------------------------------------------------------------
+
+export const syncBackendLocationReminderNotification = async (
+ reminder: BackendLocationReminder | null,
+) => {
+ if (!reminder) {
+  console.log(
+   '[Notification] syncBackendLocationReminderNotification → null, dismissing',
+  );
+  renderedPayloads.delete(NotificationKey.BackendLocationReminder);
+  await dismissAttendanceNotification(NotificationKey.BackendLocationReminder);
+  return;
+ }
+
+ console.log('[Notification] syncBackendLocationReminderNotification →', {
+  type: reminder.type,
+  action_1: reminder.action_1,
+  action_1_title: reminder.action_1_title,
+  action_2: reminder.action_2,
+  action_2_title: reminder.action_2_title,
+  action_3: reminder.action_3,
+  action_3_title: reminder.action_3_title,
+ });
+
+ const actions = normalizeBackendLocationActions(reminder);
+ console.log('[Notification] Normalized actions →', actions);
+
+ // Always force re-display — clear dedup cache so a repeated server push
+ // is never silently swallowed even when the payload is identical
+ renderedPayloads.delete(NotificationKey.BackendLocationReminder);
+
+ await displayAttendanceNotification(NotificationKey.BackendLocationReminder, {
+  title: reminder.title || 'Location Reminder',
+  body:
+   reminder.body ||
+   reminder.message ||
+   'You are outside office. Please check in or open the map.',
+  actions,
+  categoryId: 'backend-location-reminder',
+ });
+};
+
+// ---------------------------------------------------------------------------
+// FIX 3 — handleIncomingRemoteMessage
+//
+// Previously the function gated the entire display on hasBackendLocationReminderActions.
+// Now EVERY FCM message is displayed. If the payload contains location-reminder
+// action fields, the proper action buttons are attached; otherwise the message
+// is shown as a plain informational notification so no FCM push is ever lost.
+// ---------------------------------------------------------------------------
 
 export const handleIncomingRemoteMessage = async (
  remoteMessage: FirebaseMessagingTypes.RemoteMessage,
 ) => {
  console.log(
-  'FCM background message received',
-  remoteMessage?.messageId,
-  remoteMessage?.data,
+  '--------------------------------------------------',
  );
+ console.log(
+  '[FCM] handleIncomingRemoteMessage → RECEIVED',
+ );
+ console.log(
+  '[FCM] Message ID:',
+  remoteMessage?.messageId,
+ );
+ console.log(
+  '[FCM] Data Payload:',
+  JSON.stringify(remoteMessage?.data, null, 2),
+ );
+ console.log(
+  '[FCM] Notification Payload:',
+  JSON.stringify(remoteMessage?.notification, null, 2),
+ );
+ console.log(
+  '--------------------------------------------------',
+ );
+
  await ensureBackgroundReady();
  const channelId = await ensureChannel();
+
+ const data = remoteMessage.data as BackendLocationReminder | undefined;
+
+ // Detect whether this FCM payload is a backend location reminder
+ const isBackendLocationReminder = data
+  ? hasBackendLocationReminderActions(data)
+  : false;
+
+ // Resolve title — prefer explicit notification fields, fall back to data fields
  const title =
-  (typeof remoteMessage.notification?.title === 'string'
-   ? remoteMessage.notification.title
-   : undefined) ||
-  (typeof remoteMessage.data?.title === 'string'
-   ? remoteMessage.data.title
-   : undefined) ||
-  'Shift update';
+  remoteMessage.notification?.title ||
+  data?.title ||
+  (isBackendLocationReminder ? 'Location reminder' : 'Shift update');
+
+ // Resolve body
  const body =
-  (typeof remoteMessage.notification?.body === 'string'
-   ? remoteMessage.notification.body
-   : undefined) ||
-  (typeof remoteMessage.data?.body === 'string'
-   ? remoteMessage.data.body
-   : undefined) ||
-  'You have a new update.';
+  remoteMessage.notification?.body ||
+  data?.body ||
+  data?.message ||
+  (isBackendLocationReminder
+   ? 'You are outside office. Please check in or open the map.'
+   : 'You have a new update.');
+
+ // Attach action buttons only for location-reminder payloads
+ const actions = isBackendLocationReminder
+  ? normalizeBackendLocationActions(data as BackendLocationReminder)
+  : undefined;
+
+ // Use a stable id for location-reminder notifications so they replace each
+ // other in the tray instead of stacking. Other FCM messages use the FCM
+ // message id so they appear as individual banners.
+ const notificationId = isBackendLocationReminder
+  ? NotificationKey.BackendLocationReminder
+  : remoteMessage.messageId;
+
+ console.log('[FCM] Displaying notification:', {
+  id: notificationId,
+  title,
+  body,
+  isBackendLocationReminder,
+  actions,
+ });
 
  await notifee.displayNotification({
+  id: notificationId,
   title,
   body,
   android: {
    channelId,
    smallIcon: 'ic_launcher',
+   color: ANDROID_COLOR_HEX,
+   largeIcon: 'ic_launcher',
    pressAction: {id: 'open-app'},
+   style: {type: AndroidStyle.BIGTEXT, text: body},
+   importance: AndroidImportance.HIGH,
+   actions: actions?.map(action => ({
+    title: action.label,
+    pressAction:
+     action.id === 'open-map' || action.id === 'check-in'
+      ? {id: action.id, launchActivity: 'default'}
+      : {id: action.id},
+   })),
   },
   ios: {
    sound: 'default',
+   categoryId: isBackendLocationReminder
+    ? 'backend-location-reminder'
+    : 'essential-local',
   },
   data: remoteMessage.data,
  });
 };
+
+// ---------------------------------------------------------------------------
+// Action handler
+// ---------------------------------------------------------------------------
 
 const processNotificationAction = async (
  actionId?: string | null,
@@ -1017,6 +1040,21 @@ const processNotificationAction = async (
   case 'open-settings':
    Linking.openSettings().catch(() => null);
    break;
+  case 'CHECK_IN':
+  case 'check-in':
+   console.log('[Notification] CHECK_IN pressed → emitting check-in');
+   notificationEvents.emit('check-in');
+   break;
+  case 'OPEN_MAP':
+  case 'open-map':
+   console.log('[Notification] OPEN_MAP pressed → navigating to travel');
+   await requestAttendanceTravelNotificationNavigation();
+   await navigateToAttendanceTravelFromNotification();
+   break;
+  case 'IGNORE':
+  case 'ignore':
+   console.log('[Notification] IGNORE pressed → dismissing');
+   break;
   default:
    if (isInteractiveAction(actionId)) {
     notificationEvents.emit(actionId);
@@ -1028,6 +1066,10 @@ const processNotificationAction = async (
   await dismissAttendanceNotification(notification.id);
  }
 };
+
+// ---------------------------------------------------------------------------
+// Notifee event handlers (foreground + background)
+// ---------------------------------------------------------------------------
 
 export const handleNotifeeBackgroundEvent = async (event: Event) => {
  const {type, detail} = event;

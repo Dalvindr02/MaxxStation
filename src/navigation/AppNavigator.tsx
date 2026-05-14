@@ -1,4 +1,5 @@
 import React, {useMemo} from 'react';
+import {Platform} from 'react-native';
 import {
  DarkTheme as NavigationDarkTheme,
  DefaultTheme as NavigationDefaultTheme,
@@ -9,10 +10,10 @@ import {
  createBottomTabNavigator,
 } from '@react-navigation/bottom-tabs';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
-import {enableScreens} from 'react-native-screens';
 import {useAppTheme} from '../context/ThemeContext';
 import {CustomTabBar} from '../components/CustomTabBar';
 import AttendanceScreen from '../screens/AttendanceScreen';
+import BillableTravelScreen from '../screens/BillableTravelScreen';
 import AttendanceHistoryScreen from '../screens/AttendanceHistoryScreen';
 import AttendanceTravelScreen from '../screens/AttendanceTravelScreen';
 import {TravelLogListScreen} from '../screens/TravelLogListScreen';
@@ -32,8 +33,10 @@ import {ReportListScreen} from '../screens/ReportListScreen';
 import {ReportDetailScreen} from '../screens/ReportDetailScreen';
 import {useAppSelector} from '../store/hooks';
 import {RootStackParamList} from './types';
-
-enableScreens();
+import {
+ flushPendingNotificationNavigation,
+ navigationRef,
+} from './rootNavigation';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tabs = createBottomTabNavigator();
@@ -60,9 +63,11 @@ const TabNavigator = () => {
 
  return (
   <Tabs.Navigator
+   detachInactiveScreens={Platform.OS === 'ios' ? false : undefined}
    tabBar={renderTabBar}
    screenOptions={{
     headerShown: false,
+    freezeOnBlur: false,
    }}>
    <Tabs.Screen name="Home" component={HomeScreen} />
    <Tabs.Screen name="Attendance" component={AttendanceScreen} />
@@ -79,6 +84,7 @@ const TabNavigator = () => {
    <Tabs.Screen
     name="Profile"
     component={ProfileScreen}
+    options={{freezeOnBlur: false}}
     // listeners={{
     //   tabPress: e => {
     //     e.preventDefault();
@@ -141,8 +147,15 @@ export const AppNavigator = () => {
  );
 
  return (
-  <NavigationContainer theme={navigationTheme}>
-   <Stack.Navigator screenOptions={{headerShown: false}}>
+  <NavigationContainer
+   ref={navigationRef}
+   theme={navigationTheme}
+   onReady={flushPendingNotificationNavigation}>
+   <Stack.Navigator
+    screenOptions={{
+     headerShown: false,
+     animation: Platform.OS === 'ios' ? 'none' : 'default',
+    }}>
     {!isAuthenticated ? (
      <Stack.Group navigationKey="auth-flow">
       <Stack.Screen name="Auth" component={LoginScreen} />
@@ -217,6 +230,14 @@ export const AppNavigator = () => {
        options={{
         presentation: 'modal',
         animation: 'slide_from_right',
+       }}
+      />
+      <Stack.Screen
+       name="BillableTravel"
+       component={BillableTravelScreen}
+       options={{
+        presentation: 'modal',
+        animation: 'slide_from_bottom',
        }}
       />
      </Stack.Group>

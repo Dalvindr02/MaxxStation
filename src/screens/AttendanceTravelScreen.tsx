@@ -11,15 +11,13 @@ import {
   TouchableOpacity,
   View,
   KeyboardAvoidingView,
+  Keyboard,
+  InteractionManager,
 } from 'react-native';
 import Animated, {
   FadeInDown,
   FadeOutUp,
-  Layout,
   LinearTransition,
-  useAnimatedStyle,
-  withTiming,
-  useSharedValue,
 } from 'react-native-reanimated';
 import Feather from 'react-native-vector-icons/Feather';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -37,13 +35,15 @@ import { useAppTheme } from '../context/ThemeContext';
 import { AppTheme } from '../theme';
 import { LatLng, WORK_LOCATION } from '../constants/workLocation';
 import {
-  createManualLogRequest,
   createTravelLogRequest,
+  updateTravelLogRequest,
 } from '../services/manualLogService';
 import { TopHeader } from '../components/TopHeader';
 import { ProjectPickerModal } from '../components/Logs/ProjectPickerModal';
+import { AnimatedCard } from '../components/ui';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { fetchProjects } from '../store/projectsSlice';
+import { fetchTravelLogDetail, clearSelectedLog } from '../store/travelLogSlice';
 import DateTimePicker, {
   DateTimePickerEvent,
 } from '@react-native-community/datetimepicker';
@@ -61,6 +61,12 @@ type TravelStop = LatLng & {
   id: string;
   label: string;
   description?: string;
+};
+
+type SelectedMapPoint = {
+  title: string;
+  address: string;
+  type: 'office' | 'start' | 'end' | 'stop';
 };
 
 const pad = (value: number) => String(value).padStart(2, '0');
@@ -215,28 +221,42 @@ export default function AttendanceTravelScreen() {
   );
 
   const isMounted = useRef(true);
+  const saveRequestIdRef = useRef(0);
+  const mapFitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fullMapFitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isAddingStopFromMapRef = useRef(false);
   const mapRef = useRef<MapView>(null);
   const fullMapRef = useRef<MapView>(null);
 
+  const editLogData = route.params?.editLogData as any;
+  const editLogId = route.params?.editLogId;
+  const isEditing = !!editLogId;
+
   // Initialize state from route params
   const [fromLabel, setFromLabel] = useState(
-    route.params?.fromCoords ? 'Selected location' : '',
+    editLogData?.from_address || (route.params?.fromCoords ? 'Selected location' : ''),
   );
   const [fromCoords, setFromCoords] = useState<LatLng | null>(
-    route.params?.fromCoords ?? null,
+    (editLogData?.start_lat && editLogData?.start_lng) 
+      ? { latitude: Number(editLogData.start_lat), longitude: Number(editLogData.start_lng) } 
+      : (route.params?.fromCoords ?? null),
   );
   const [toLabel, setToLabel] = useState(
-    route.params?.toCoords ? 'Selected destination' : '',
+    editLogData?.to_address || (route.params?.toCoords ? 'Selected destination' : ''),
   );
   const [toCoords, setToCoords] = useState<LatLng | null>(
-    route.params?.toCoords ?? null,
+    (editLogData?.end_lat && editLogData?.end_lng)
+      ? { latitude: Number(editLogData.end_lat), longitude: Number(editLogData.end_lng) }
+      : (route.params?.toCoords ?? null),
   );
 
-  const [topic, setTopic] = useState('');
-  const [description, setDescription] = useState('');
-  const [billable, setBillable] = useState(true);
+  const [topic, setTopic] = useState(editLogData?.purpose || editLogData?.task_name || '');
+  const [description, setDescription] = useState(editLogData?.notes || editLogData?.description || '');
+  const [billable, setBillable] = useState(
+    editLogData ? (editLogData.billable === '1' || String(editLogData.billable).toLowerCase() === 'true') : true
+  );
   const [saving, setSaving] = useState(false);
+  const [isClosingAfterSave, setIsClosingAfterSave] = useState(false);
 
   // Places autocomplete
   const [fromSuggestions, setFromSuggestions] = useState<PlaceOption[]>([]);
@@ -246,13 +266,32 @@ export default function AttendanceTravelScreen() {
   const [showFromSuggestions, setShowFromSuggestions] = useState(false);
   const [showToSuggestions, setShowToSuggestions] = useState(false);
   const [isMapModalVisible, setIsMapModalVisible] = useState(false);
+  const [selectedPoint, setSelectedPoint] = useState<SelectedMapPoint | null>(null);
+
+  const { selectedLogDetail } = useAppSelector(state => state.travelLogs);
+
+  useEffect(() => {
+    if (isEditing && editLogId) {
+      dispatch(fetchTravelLogDetail(Number(editLogId)));
+    }
+    return () => {
+      dispatch(clearSelectedLog());
+    };
+  }, [isEditing, editLogId, dispatch]);
 
   // Stops
   const [stopLabel, setStopLabel] = useState('');
   const [stopSuggestions, setStopSuggestions] = useState<PlaceOption[]>([]);
   const [loadingStopSuggestions, setLoadingStopSuggestions] = useState(false);
   const [showStopSuggestions, setShowStopSuggestions] = useState(false);
-  const [stops, setStops] = useState<TravelStop[]>([]);
+  const [stops, setStops] = useState<TravelStop[]>(
+    editLogData?.stops?.map((stop: any) => ({
+      id: String(stop.id),
+      label: stop.address || `Stop ${stop.id}`,
+      latitude: Number(stop.lat),
+      longitude: Number(stop.lng),
+    })) || []
+  );
   const [isAddingStopFromMap, setIsAddingStopFromMap] = useState(false);
 
   // Directions
@@ -262,9 +301,32 @@ export default function AttendanceTravelScreen() {
   const [routeError, setRouteError] = useState<string | null>(null);
 
   useEffect(() => {
-    isMounted.current = true;
+    if (isEditing && selectedLogDetail?.stops) {
+      setStops(selectedLogDetail.stops.map(stop => ({
+        id: String(stop.id),
+        label: stop.address || `Stop ${stop.id}`,
+        latitude: Number(stop.lat),
+        longitude: Number(stop.lng),
+      })));
+    }
+  }, [isEditing, selectedLogDetail]);
+
+  useEffect(() => {
+    // isMounted is already true from synchronous ref init above.
+    // This effect only handles cleanup on unmount.
     return () => {
       isMounted.current = false;
+      saveRequestIdRef.current += 1;
+      if (mapFitTimerRef.current) {
+        clearTimeout(mapFitTimerRef.current);
+        mapFitTimerRef.current = null;
+      }
+      if (fullMapFitTimerRef.current) {
+        clearTimeout(fullMapFitTimerRef.current);
+        fullMapFitTimerRef.current = null;
+      }
+      mapRef.current = null;
+      fullMapRef.current = null;
     };
   }, []);
 
@@ -274,13 +336,20 @@ export default function AttendanceTravelScreen() {
 
   const [internalSelectedProjectId, setInternalSelectedProjectId] = useState<
     string | null
-  >(selectedProjectId);
+  >(editLogData?.project_id ? String(editLogData.project_id) : selectedProjectId);
   const [projectPickerVisible, setProjectPickerVisible] = useState(false);
 
   // Time Range States
-  const [travelDate, setTravelDate] = useState(new Date());
-  const [startTime, setStartTime] = useState('09:00');
-  const [endTime, setEndTime] = useState('10:00');
+  const [travelDate, setTravelDate] = useState(
+    editLogData?.start_date ? new Date(editLogData.start_date) : new Date()
+  );
+  const [startTime, setStartTime] = useState(
+    editLogData?.start_time?.slice(0, 5) || '09:00'
+  );
+  const [endTime, setEndTime] = useState(
+    (editLogData?.end_date_time || editLogData?.end_time)?.slice(11, 16) || 
+    editLogData?.end_time?.slice(0, 5) || '10:00'
+  );
   const [pickerVisible, setPickerVisible] = useState(false);
   const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date');
   const [pickerTarget, setPickerTarget] = useState<'date' | 'start' | 'end'>(
@@ -295,8 +364,10 @@ export default function AttendanceTravelScreen() {
   }, [isAddingStopFromMap]);
 
   useEffect(() => {
-    setInternalSelectedProjectId(selectedProjectId);
-  }, [selectedProjectId]);
+    if (!isEditing && selectedProjectId !== internalSelectedProjectId) {
+      setInternalSelectedProjectId(selectedProjectId);
+    }
+  }, [selectedProjectId, isEditing, internalSelectedProjectId]);
 
   const handleFromTextChange = useCallback((text: string) => {
     setFromLabel(text);
@@ -624,7 +695,64 @@ export default function AttendanceTravelScreen() {
   const mapCenter =
     fromCoords && toCoords ? midpoint(fromCoords, toCoords) : WORK_LOCATION;
   const mapRegion = buildMapRegion(mapCenter);
-  const selectedRouteCoordinates = selectedRoute?.points ?? [];
+  const selectedRouteCoordinates = useMemo(
+    () => selectedRoute?.points ?? [],
+    [selectedRoute],
+  );
+
+  const handleMarkerPress = useCallback(
+    (
+      event: { stopPropagation?: () => void } | undefined,
+      point: SelectedMapPoint,
+    ) => {
+      event?.stopPropagation?.();
+      setSelectedPoint(point);
+    },
+    [],
+  );
+
+  const renderSelectedPointCard = useCallback(
+    (style?: object) => {
+      if (!selectedPoint) return null;
+
+      const pointColor =
+        selectedPoint.type === 'start'
+          ? '#10B981'
+          : selectedPoint.type === 'end'
+            ? '#EF4444'
+            : selectedPoint.type === 'office'
+              ? '#22C55E'
+              : '#8B5CF6';
+      const pointIcon =
+        selectedPoint.type === 'start'
+          ? 'play-circle'
+          : selectedPoint.type === 'end'
+            ? 'target'
+            : selectedPoint.type === 'office'
+              ? 'briefcase'
+              : 'clock';
+
+      return (
+        <AnimatedCard style={[styles.floatingInfoCard, style]}>
+          <View style={styles.calloutHeader}>
+            <View style={styles.calloutTitleGroup}>
+              <Feather name={pointIcon} size={14} color={pointColor} />
+              <Text style={[styles.calloutTitle, { color: pointColor }]}>
+                {selectedPoint.title}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => setSelectedPoint(null)}
+              style={styles.closeButton}>
+              <Feather name="x" size={18} color={theme.colors.muted} />
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.calloutAddress}>{selectedPoint.address}</Text>
+        </AnimatedCard>
+      );
+    },
+    [selectedPoint, styles, theme.colors.muted],
+  );
 
   // Collect all coordinates for fitToCoordinates
   const allMapCoords = useMemo(() => {
@@ -642,9 +770,14 @@ export default function AttendanceTravelScreen() {
 
   // Auto-zoom both maps to fit all markers/route
   useEffect(() => {
-    if (allMapCoords.length > 0) {
+    if (mapFitTimerRef.current) {
+      clearTimeout(mapFitTimerRef.current);
+    }
+
+    if (!isClosingAfterSave && allMapCoords.length > 0) {
       const padding = { top: 60, right: 60, bottom: 60, left: 60 };
-      setTimeout(() => {
+      mapFitTimerRef.current = setTimeout(() => {
+        if (!isMounted.current || isClosingAfterSave) return;
         mapRef.current?.fitToCoordinates(allMapCoords, {
           edgePadding: padding,
           animated: true,
@@ -655,7 +788,7 @@ export default function AttendanceTravelScreen() {
         });
       }, 500);
     }
-  }, [allMapCoords]);
+  }, [allMapCoords, isClosingAfterSave]);
   const canSave =
     fromCoords &&
     toCoords &&
@@ -779,6 +912,9 @@ export default function AttendanceTravelScreen() {
     );
     if (!selectedProject) return;
 
+    Keyboard.dismiss();
+    const requestId = saveRequestIdRef.current + 1;
+    saveRequestIdRef.current = requestId;
     setSaving(true);
     try {
       const [startH, startM] = startTime.split(':').map(Number);
@@ -811,17 +947,35 @@ export default function AttendanceTravelScreen() {
         })),
       };
 
-      const result = await createTravelLogRequest(payload, authToken ?? '');
+      let result;
+      if (isEditing && editLogId) {
+        result = await updateTravelLogRequest(editLogId, payload, authToken ?? '');
+      } else {
+        result = await createTravelLogRequest(payload, authToken ?? '');
+      }
 
-      if (result.success) {
+      if (!isMounted.current || requestId !== saveRequestIdRef.current) {
+        return;
+      }
+
+      if (result?.success) {
         showDialog({
           title: 'Success',
-          message: result.message || 'Travel log created successfully.',
+          message: result.message || `Travel log ${isEditing ? 'updated' : 'created'} successfully.`,
           variant: 'success',
           primaryAction: {
             label: 'Okay',
             onPress: () => {
-              navigation.goBack();
+              setIsMapModalVisible(false);
+              setSelectedPoint(null);
+              setIsClosingAfterSave(true);
+              InteractionManager.runAfterInteractions(() => {
+                setTimeout(() => {
+                  if (isMounted.current && navigation.canGoBack()) {
+                    navigation.goBack();
+                  }
+                }, 150);
+              });
             },
           },
         });
@@ -829,29 +983,31 @@ export default function AttendanceTravelScreen() {
       } else {
         showDialog({
           title: 'Error',
-          message: result.message || 'Failed to create travel log.',
+          message: result?.message || `Failed to ${isEditing ? 'update' : 'create'} travel log.`,
           variant: 'error',
           primaryAction: { label: 'Okay' },
         });
       }
     } catch (error) {
-      console.error('Error saving travel log:', error);
+      console.error(`Error ${isEditing ? 'updating' : 'saving'} travel log:`, error);
+      if (!isMounted.current || requestId !== saveRequestIdRef.current) {
+        return;
+      }
       showDialog({
         title: 'Error',
         message:
           error instanceof Error
             ? error.message
-            : 'Unable to create travel log. Please try again.',
+            : `Unable to ${isEditing ? 'update' : 'create'} travel log. Please try again.`,
         variant: 'error',
         primaryAction: { label: 'Okay' },
       });
     } finally {
-      if (isMounted.current) {
+      if (isMounted.current && requestId === saveRequestIdRef.current) {
         setSaving(false);
       }
     }
   }, [
-    canSave,
     selectedRoute,
     fromCoords,
     toCoords,
@@ -866,11 +1022,36 @@ export default function AttendanceTravelScreen() {
     travelDate,
     startTime,
     endTime,
+    isEditing,
+    editLogId,
   ]);
 
   const handleClose = useCallback(() => {
+    setIsMapModalVisible(false);
+    setSelectedPoint(null);
+    setIsClosingAfterSave(true);
     navigation.goBack();
   }, [navigation]);
+
+  if (isClosingAfterSave) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <LinearGradient
+          colors={theme.gradients.screen}
+          start={{ x: 0.5, y: 0 }}
+          end={{ x: 0.5, y: 1 }}
+          style={styles.backgroundGradient}
+        />
+        <View style={styles.centerState}>
+          <ActivityIndicator
+            key="travel-log-closing"
+            size="large"
+            color={theme.colors.primary}
+          />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -882,8 +1063,8 @@ export default function AttendanceTravelScreen() {
       />
 
       <TopHeader
-        title="Travel Log"
-        subtitle="Create a travel route with stops"
+        title={isEditing ? "Edit Travel Log" : "Travel Log"}
+        subtitle={isEditing ? "Modify your travel details" : "Create a travel route with stops"}
         rightType="avatar"
         forceShowBack
         onBackPress={handleClose}
@@ -1002,6 +1183,7 @@ export default function AttendanceTravelScreen() {
                   <Feather name="clock" size={16} color={theme.colors.muted} />
                 </TouchableOpacity>
               </View>
+
 
               <TouchableOpacity
                 style={styles.nextButton}
@@ -1313,30 +1495,96 @@ export default function AttendanceTravelScreen() {
                   provider={PROVIDER_GOOGLE}
                   style={styles.mapCompact}
                   initialRegion={mapRegion}
-                  onPress={event => handleMapPress(event.nativeEvent.coordinate)}>
-                  <Marker coordinate={WORK_LOCATION} title="Office" pinColor="#22C55E" />
+                  onPress={event => {
+                    handleMapPress(event.nativeEvent.coordinate);
+                    setSelectedPoint(null);
+                  }}>
+                  <Marker
+                    coordinate={WORK_LOCATION}
+                    onPress={event =>
+                      handleMarkerPress(event, {
+                        title: 'Office',
+                        address: 'Work Location',
+                        type: 'office',
+                      })
+                    }
+                    anchor={{x: 0.5, y: 0.5}}>
+                    <View style={styles.markerWrapper}>
+                      <View style={[styles.customPin, {backgroundColor: '#22C55E'}]}>
+                        <Feather name="briefcase" size={12} color="#FFF" />
+                      </View>
+                      <View style={[styles.pinTail, {borderTopColor: '#22C55E'}]} />
+                      <Text style={[styles.markerLabel, {color: '#22C55E'}]}>
+                        OFFICE
+                      </Text>
+                    </View>
+                  </Marker>
                   {fromCoords && (
                     <Marker
                       coordinate={fromCoords}
-                      title="Starting Point"
-                      pinColor="#2563EB"
-                    />
+                      onPress={event =>
+                        handleMarkerPress(event, {
+                          title: 'Starting Point',
+                          address: fromLabel,
+                          type: 'start',
+                        })
+                      }
+                      anchor={{x: 0.5, y: 0.5}}>
+                      <View style={styles.markerWrapper}>
+                        <View style={[styles.customPin, {backgroundColor: '#10B981'}]}>
+                          <Feather name="map-pin" size={12} color="#FFF" />
+                        </View>
+                        <View style={[styles.pinTail, {borderTopColor: '#10B981'}]} />
+                        <Text style={[styles.markerLabel, {color: '#10B981'}]}>
+                          START
+                        </Text>
+                      </View>
+                    </Marker>
                   )}
                   {toCoords && (
                     <Marker
                       coordinate={toCoords}
-                      title="Destination"
-                      pinColor="#DC2626"
-                    />
+                      onPress={event =>
+                        handleMarkerPress(event, {
+                          title: 'Destination',
+                          address: toLabel,
+                          type: 'end',
+                        })
+                      }
+                      anchor={{x: 0.5, y: 0.5}}>
+                      <View style={styles.markerWrapper}>
+                        <View style={[styles.customPin, {backgroundColor: '#EF4444'}]}>
+                          <Feather name="flag" size={12} color="#FFF" />
+                        </View>
+                        <View style={[styles.pinTail, {borderTopColor: '#EF4444'}]} />
+                        <Text style={[styles.markerLabel, {color: '#EF4444'}]}>
+                          END
+                        </Text>
+                      </View>
+                    </Marker>
                   )}
                   {stops.map((stop, index) => (
                     <Marker
                       key={stop.id}
                       coordinate={stop}
-                      title={`Stop ${index + 1}`}
-                      description={stop.label}
-                      pinColor="#8B5CF6"
-                    />
+                      onPress={event =>
+                        handleMarkerPress(event, {
+                          title: `Stop ${index + 1}`,
+                          address: stop.label,
+                          type: 'stop',
+                        })
+                      }
+                      anchor={{x: 0.5, y: 0.5}}>
+                      <View style={styles.markerWrapper}>
+                        <View style={[styles.customPin, {backgroundColor: '#8B5CF6'}]}>
+                          <Text style={styles.stopMarkerText}>{index + 1}</Text>
+                        </View>
+                        <View style={[styles.pinTail, {borderTopColor: '#8B5CF6'}]} />
+                        <Text style={[styles.markerLabel, {color: '#8B5CF6'}]}>
+                          STOP {index + 1}
+                        </Text>
+                      </View>
+                    </Marker>
                   ))}
                   {fromCoords && toCoords && selectedRouteCoordinates.length > 1 && (
                     <Polyline
@@ -1351,6 +1599,7 @@ export default function AttendanceTravelScreen() {
                   onPress={() => setIsMapModalVisible(true)}>
                   <Feather name="maximize-2" size={14} color="#FFF" />
                 </TouchableOpacity>
+                {renderSelectedPointCard({ bottom: 12, left: 12, right: 12 })}
               </View>
 
               {loadingRoutes && (
@@ -1487,7 +1736,7 @@ export default function AttendanceTravelScreen() {
               <TouchableOpacity
                 style={styles.nextButton}
                 onPress={() => setActiveStep(3)}>
-                <Text style={styles.nextButtonText}>Add Log Entry</Text>
+                <Text style={styles.nextButtonText}>{isEditing ? 'Update Details' : 'Add Log Entry'}</Text>
                 <Feather name="arrow-right" size={16} color="#FFF" />
               </TouchableOpacity>
             </View>
@@ -1570,7 +1819,7 @@ export default function AttendanceTravelScreen() {
                   ) : (
                     <>
                       <Feather name="check" size={18} color="#FFF" />
-                      <Text style={styles.saveButtonText}>Save Log</Text>
+                      <Text style={styles.saveButtonText}>{isEditing ? 'Update Log' : 'Save Log'}</Text>
                     </>
                   )}
                 </TouchableOpacity>
@@ -1586,7 +1835,7 @@ export default function AttendanceTravelScreen() {
 
       <Modal visible={isMapModalVisible} transparent animationType="fade">
         <View style={styles.mapModalOverlay}>
-          <View style={styles.mapModalContent}>
+          <SafeAreaView style={styles.mapModalContent}>
             <MapView
               ref={fullMapRef}
               provider={PROVIDER_GOOGLE}
@@ -1595,7 +1844,11 @@ export default function AttendanceTravelScreen() {
               initialRegion={mapRegion}
               onMapReady={() => {
                 if (allMapCoords.length > 0) {
-                  setTimeout(() => {
+                  if (fullMapFitTimerRef.current) {
+                    clearTimeout(fullMapFitTimerRef.current);
+                  }
+                  fullMapFitTimerRef.current = setTimeout(() => {
+                    if (!isMounted.current || isClosingAfterSave) return;
                     fullMapRef.current?.fitToCoordinates(allMapCoords, {
                       edgePadding: { top: 100, right: 80, bottom: 100, left: 80 },
                       animated: true,
@@ -1603,22 +1856,90 @@ export default function AttendanceTravelScreen() {
                   }, 300);
                 }
               }}
-              onPress={event => handleMapPress(event.nativeEvent.coordinate)}>
-              <Marker coordinate={WORK_LOCATION} title="Office" pinColor="#22C55E" />
-              {fromCoords ? (
-                <Marker coordinate={fromCoords} title="From" pinColor="#2563EB" />
-              ) : null}
-              {toCoords ? (
-                <Marker coordinate={toCoords} title="To" pinColor="#DC2626" />
-              ) : null}
+              onPress={event => {
+                handleMapPress(event.nativeEvent.coordinate);
+                setSelectedPoint(null);
+              }}>
+              <Marker
+                coordinate={WORK_LOCATION}
+                onPress={event =>
+                  handleMarkerPress(event, {
+                    title: 'Office',
+                    address: 'Work Location',
+                    type: 'office',
+                  })
+                }
+                anchor={{x: 0.5, y: 0.5}}>
+                <View style={styles.markerWrapper}>
+                  <View style={[styles.customPin, {backgroundColor: '#22C55E'}]}>
+                    <Feather name="briefcase" size={12} color="#FFF" />
+                  </View>
+                  <View style={[styles.pinTail, {borderTopColor: '#22C55E'}]} />
+                  <Text style={[styles.markerLabel, {color: '#22C55E'}]}>
+                    OFFICE
+                  </Text>
+                </View>
+              </Marker>
+              {fromCoords && (
+                <Marker
+                  coordinate={fromCoords}
+                  onPress={event =>
+                    handleMarkerPress(event, {
+                      title: 'Starting Point',
+                      address: fromLabel,
+                      type: 'start',
+                    })
+                  }
+                  anchor={{ x: 0.5, y: 0.5 }}>
+                  <View style={styles.markerWrapper}>
+                    <View style={[styles.customPin, { backgroundColor: '#10B981' }]}>
+                      <Feather name="map-pin" size={12} color="#FFF" />
+                    </View>
+                    <View style={[styles.pinTail, { borderTopColor: '#10B981' }]} />
+                    <Text style={[styles.markerLabel, { color: '#10B981' }]}>START</Text>
+                  </View>
+                </Marker>
+              )}
+              {toCoords && (
+                <Marker
+                  coordinate={toCoords}
+                  onPress={event =>
+                    handleMarkerPress(event, {
+                      title: 'Destination',
+                      address: toLabel,
+                      type: 'end',
+                    })
+                  }
+                  anchor={{ x: 0.5, y: 0.5 }}>
+                  <View style={styles.markerWrapper}>
+                    <View style={[styles.customPin, { backgroundColor: '#EF4444' }]}>
+                      <Feather name="flag" size={12} color="#FFF" />
+                    </View>
+                    <View style={[styles.pinTail, { borderTopColor: '#EF4444' }]} />
+                    <Text style={[styles.markerLabel, { color: '#EF4444' }]}>END</Text>
+                  </View>
+                </Marker>
+              )}
               {stops.map((stop, index) => (
                 <Marker
                   key={stop.id}
                   coordinate={stop}
-                  title={`Stop ${index + 1}`}
-                  description={stop.label}
-                  pinColor="#8B5CF6"
-                />
+                  onPress={event =>
+                    handleMarkerPress(event, {
+                      title: `Stop ${index + 1}`,
+                      address: stop.label,
+                      type: 'stop',
+                    })
+                  }
+                  anchor={{ x: 0.5, y: 0.5 }}>
+                  <View style={styles.markerWrapper}>
+                    <View style={[styles.customPin, { backgroundColor: '#8B5CF6' }]}>
+                      <Text style={styles.stopMarkerText}>{index + 1}</Text>
+                    </View>
+                    <View style={[styles.pinTail, { borderTopColor: '#8B5CF6' }]} />
+                    <Text style={[styles.markerLabel, { color: '#8B5CF6' }]}>STOP {index + 1}</Text>
+                  </View>
+                </Marker>
               ))}
 
               {fromCoords && toCoords && selectedRouteCoordinates.length > 1 ? (
@@ -1635,7 +1956,9 @@ export default function AttendanceTravelScreen() {
               activeOpacity={0.85}>
               <Feather name="x" size={24} color="#FFFFFF" />
             </TouchableOpacity>
-          </View>
+
+            {renderSelectedPointCard({ bottom: insets.bottom + 20 })}
+          </SafeAreaView>
         </View>
       </Modal>
       <ProjectPickerModal
@@ -1674,6 +1997,7 @@ export default function AttendanceTravelScreen() {
           onChange={handlePickerChange}
         />
       ) : null}
+
     </SafeAreaView>
   );
 }
@@ -1694,6 +2018,11 @@ const createStyles = (theme: AppTheme) =>
     backgroundGradient: {
       ...StyleSheet.absoluteFillObject,
       zIndex: -1,
+    },
+    centerState: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     scrollContent: {
       padding: 16,
@@ -2188,6 +2517,7 @@ const createStyles = (theme: AppTheme) =>
       color: '#FFF',
       fontWeight: '800',
       fontSize: 15,
+      flexShrink: 1,
     },
     mapCompactContainer: {
       height: 260,
@@ -2361,5 +2691,101 @@ const createStyles = (theme: AppTheme) =>
       color: theme.colors.text,
       fontWeight: '700',
       fontSize: 14,
+    },
+    floatingInfoCard: {
+      position: 'absolute',
+      bottom: 20,
+      left: 16,
+      right: 16,
+      backgroundColor: theme.isDark ? '#1E1035' : '#FFFFFF',
+      padding: 16,
+      borderRadius: 20,
+      borderWidth: 1.5,
+      borderColor: theme.isDark ? 'rgba(255,255,255,0.2)' : '#E2E8F0',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 5 },
+      shadowOpacity: 0.5,
+      shadowRadius: 10,
+      zIndex: 1000,
+      elevation: 15,
+    },
+    closeButton: {
+      padding: 4,
+    },
+    calloutHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+      marginBottom: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.isDark ? 'rgba(255,255,255,0.08)' : '#E2E8F0',
+      paddingBottom: 6,
+    },
+    calloutTitleGroup: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    calloutTitle: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: theme.colors.primary,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    calloutAddress: {
+      fontSize: 13,
+      color: theme.colors.text,
+      fontWeight: '600',
+      lineHeight: 18,
+    },
+    markerWrapper: {
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    customPin: {
+      width: 26,
+      height: 26,
+      borderRadius: 13,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 2,
+      borderColor: '#FFFFFF',
+      elevation: 5,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.3,
+      shadowRadius: 4,
+    },
+    pinTail: {
+      width: 0,
+      height: 0,
+      backgroundColor: 'transparent',
+      borderStyle: 'solid',
+      borderLeftWidth: 5,
+      borderRightWidth: 5,
+      borderTopWidth: 8,
+      borderLeftColor: 'transparent',
+      borderRightColor: 'transparent',
+      borderTopColor: '#10B981',
+    },
+    markerLabel: {
+      fontSize: 9,
+      fontWeight: '900',
+      marginTop: 2,
+      backgroundColor: 'rgba(255,255,255,0.95)',
+      paddingHorizontal: 4,
+      paddingVertical: 1,
+      borderRadius: 4,
+      borderWidth: 1,
+      borderColor: 'rgba(0,0,0,0.1)',
+      textAlign: 'center',
+      overflow: 'hidden',
+    },
+    stopMarkerText: {
+      color: '#FFF',
+      fontSize: 10,
+      fontWeight: '800',
     },
   });

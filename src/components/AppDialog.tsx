@@ -1,8 +1,8 @@
 import React, {useEffect, useMemo, useRef} from 'react';
 import {
  Animated,
+ InteractionManager,
  Modal,
- Platform,
  Pressable,
  StyleSheet,
  Text,
@@ -57,6 +57,9 @@ export const AppDialog = ({
  const cardOpacity = useRef(new Animated.Value(0)).current;
  const animationRef = useRef<Animated.CompositeAnimation | null>(null);
  const pendingActionRef = useRef<(() => void) | null>(null);
+ const pendingActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+  null,
+ );
 
  useEffect(() => {
   if (visible) {
@@ -77,21 +80,42 @@ export const AppDialog = ({
    ]);
    animationRef.current.start();
   } else {
-   // Stop any in-progress animations when hiding
    animationRef.current?.stop();
   }
  }, [visible, scale, cardOpacity]);
+
+ useEffect(() => {
+  if (visible || !pendingActionRef.current) return;
+
+  if (pendingActionTimerRef.current) {
+   clearTimeout(pendingActionTimerRef.current);
+  }
+
+  pendingActionTimerRef.current = setTimeout(() => {
+   const pendingAction = pendingActionRef.current;
+   pendingActionRef.current = null;
+   pendingActionTimerRef.current = null;
+
+   InteractionManager.runAfterInteractions(() => {
+    pendingAction?.();
+   });
+  }, 350);
+ }, [visible]);
+
+ useEffect(
+  () => () => {
+   if (pendingActionTimerRef.current) {
+    clearTimeout(pendingActionTimerRef.current);
+   }
+   pendingActionRef.current = null;
+  },
+  [],
+ );
 
  const handleClose = () => {
   if (dismissOnBackdrop && onClose) {
    onClose();
   }
- };
-
- const handleDismiss = () => {
-  const pendingAction = pendingActionRef.current;
-  pendingActionRef.current = null;
-  pendingAction?.();
  };
 
  const renderAction = (
@@ -110,22 +134,8 @@ export const AppDialog = ({
    : ['rgba(255,255,255,0.88)', 'rgba(255,255,255,0.72)'];
 
   const handleActionPress = () => {
+   pendingActionRef.current = action.onPress ?? null;
    onClose?.();
-
-   if (!action.onPress) {
-    pendingActionRef.current = null;
-    return;
-   }
-
-   if (Platform.OS === 'ios' && onClose) {
-    // On iOS, wait for the native modal to fully dismiss before
-    // firing actions that may unmount the current navigation tree.
-    pendingActionRef.current = action.onPress;
-    return;
-   }
-
-   pendingActionRef.current = null;
-   action.onPress();
   };
 
   return (
@@ -173,12 +183,12 @@ export const AppDialog = ({
   <Modal
    visible={visible}
    transparent
-   animationType="none"
+   animationType="fade"
    statusBarTranslucent
-   onDismiss={handleDismiss}
+   presentationStyle="overFullScreen"
    onRequestClose={handleClose}>
    <Pressable style={styles.backdrop} onPress={handleClose}>
-    <Pressable style={styles.innerPressable} onPress={() => {}}>
+    <Pressable style={styles.innerPressable} onPress={() => undefined}>
      <Animated.View style={cardStyle}>
       {onClose && (
        <TouchableOpacity

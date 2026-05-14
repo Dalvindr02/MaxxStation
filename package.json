@@ -32,6 +32,8 @@
   "axios": "^1.14.0",
   "react": "19.2.3",
   "react-native": "0.84.0",
+  "react-native-background-actions": "^4.1.0",
+  "react-native-background-fetch": "^4.2.10",
   "react-native-calendars": "^1.1314.0",
   "react-native-config": "^1.6.1",
   "react-native-device-info": "^15.0.2",

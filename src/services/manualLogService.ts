@@ -681,6 +681,163 @@ export const createTravelLogRequest = async (
   }
 };
 
+export const updateTravelLogRequest = async (
+  id: string | number,
+  payload: CreateTravelLogPayload,
+  authToken?: string | null,
+): Promise<CreateTravelLogResult> => {
+  try {
+    if (!authToken?.trim()) {
+      throw new Error('Login token is missing. Please sign in again.');
+    }
+
+    console.log('Update travel log request payload:', JSON.stringify(payload, null, 2));
+
+    const response = await axios.post(
+      `${buildApiUrl(API_ENDPOINTS.travelLogUpdate)}/${id}`,
+      payload,
+      {
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+          Authorization: `Bearer ${authToken.trim()}`,
+        },
+      },
+    );
+
+    console.log('Update travel log API response:', response.data);
+
+    const responsePayload = isRecord(response.data)
+      ? (response.data as Record<string, unknown>)
+      : null;
+    
+    const success = responsePayload
+      ? getSuccessStatus(responsePayload) || response.status < 300
+      : response.status < 300;
+
+    const message =
+      (responsePayload &&
+        typeof responsePayload.message === 'string' &&
+        responsePayload.message.trim()) ||
+      (success ? 'Travel log updated successfully.' : 'Failed to update travel log.');
+
+    if (!success) {
+      throw new Error(message);
+    }
+
+    return {
+      success,
+      message,
+      data: responsePayload,
+    };
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      console.log('Update travel log API error response:', error.response?.data);
+
+      const errorPayload = error.response?.data;
+      const fallback = error.response?.status
+        ? `Update travel log request failed with status ${error.response.status}`
+        : 'Unable to update travel log. Please try again.';
+
+      throw new Error(getErrorMessage(errorPayload, fallback));
+    }
+
+    if (error instanceof Error) {
+      throw error;
+    }
+
+    throw new Error('Unable to update travel log. Please try again.');
+  }
+};
+
+export const deleteTravelLogRequest = async (
+  id: string | number,
+  authToken?: string | null,
+): Promise<{ success: boolean; message: string }> => {
+  try {
+    if (!authToken?.trim()) {
+      throw new Error('Login token is missing. Please sign in again.');
+    }
+
+    const url = `${buildApiUrl(API_ENDPOINTS.travelLogDelete)}/${id}`;
+    
+    console.log('Delete travel log request:', { url, hasAuthToken: Boolean(authToken?.trim()) });
+
+    const headers = {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'X-Requested-With': 'XMLHttpRequest',
+      Authorization: `Bearer ${authToken.trim()}`,
+    };
+
+    let response;
+    try {
+      response = await axios.delete(url, {
+        headers,
+      });
+    } catch (deleteError) {
+      if (
+        axios.isAxiosError(deleteError) &&
+        [404, 405, 501].includes(deleteError.response?.status ?? 0)
+      ) {
+        console.log('Delete travel log retrying with POST _method DELETE');
+        response = await axios.post(
+          url,
+          { _method: 'DELETE' },
+          {
+            headers,
+          },
+        );
+      } else {
+        throw deleteError;
+      }
+    }
+
+    console.log('Delete travel log API response:', response.data);
+
+    const responsePayload = isRecord(response.data)
+      ? (response.data as Record<string, unknown>)
+      : null;
+      
+    const success = responsePayload
+      ? getSuccessStatus(responsePayload) || response.status < 300
+      : response.status < 300;
+
+    const message =
+      (responsePayload &&
+        typeof responsePayload.message === 'string' &&
+        responsePayload.message.trim()) ||
+      (success ? 'Travel log deleted successfully.' : 'Failed to delete travel log.');
+
+    if (!success) {
+      throw new Error(message);
+    }
+
+    return {
+      success,
+      message,
+    };
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      console.log('Delete travel log API error response:', error.response?.data);
+
+      const errorPayload = error.response?.data;
+      const fallback = error.response?.status
+        ? `Delete travel log request failed with status ${error.response.status}`
+        : 'Unable to delete travel log. Please try again.';
+
+      throw new Error(getErrorMessage(errorPayload, fallback));
+    }
+
+    if (error instanceof Error) {
+      throw error;
+    }
+
+    throw new Error('Unable to delete travel log. Please try again.');
+  }
+};
+
 export const fetchManualLogListRequest = async (
   authToken?: string | null,
 ): Promise<ManualLogListResult> => {

@@ -286,7 +286,9 @@ export const LogDetailScreen = () => {
     end={{x: 0.5, y: 1}}
     style={styles.backgroundGradient}
    />
-   <TopHeader title="Log Details" />
+   <View style={{padding: 14}}>
+    <TopHeader title="Log Details" />
+   </View>
 
    <ScrollView
     showsVerticalScrollIndicator={false}
@@ -576,7 +578,7 @@ const createStyles = (theme: AppTheme) => {
    backgroundColor: 'rgba(255,255,255,0.03)',
   },
   heroGradient: {
-   padding: 24,
+   padding: 7,
    borderRadius: 28,
   },
   heroGlow: {
@@ -608,8 +610,11 @@ const createStyles = (theme: AppTheme) => {
   statusBadge: {
    flexDirection: 'row',
    alignItems: 'center',
-   paddingHorizontal: 12,
-   paddingVertical: 6,
+   padding: 8,
+   right: 15,
+   top: 5,
+   //  paddingHorizontal: 12,
+   //  paddingVertical: 6,
    borderRadius: 12,
    gap: 6,
    backgroundColor: 'rgba(255,255,255,0.08)',

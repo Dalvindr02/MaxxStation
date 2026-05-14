@@ -7,7 +7,6 @@ import React, {
  useMemo,
  useState,
 } from 'react';
-import {syncShiftActionNotifications} from '../services/notificationService';
 import {todayKey} from '../utils/date';
 import {WorkLocation} from '../constants/workLocation';
 
@@ -63,11 +62,6 @@ export const AttendanceProvider: React.FC<{children: React.ReactNode}> = ({
 
  useEffect(() => {
   AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(entries)).catch(() => null);
-  const key = todayKey();
-  const hasManualEntry = entries.some(
-   entry => entry.date === key && Boolean(entry.clockIn || entry.clockOut),
-  );
-  syncShiftActionNotifications({hasManualEntry}).catch(() => null);
  }, [entries]);
 
  const markPresence: AttendanceContextValue['markPresence'] = useCallback(

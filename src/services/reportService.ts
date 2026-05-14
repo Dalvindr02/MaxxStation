@@ -243,7 +243,7 @@ export const fetchReportsList = async (
    message,
    data: isRecord(payload.data)
     ? {
-       data: Array.isArray(payload.data.data) ? payload.data.data : [],
+       data: Array.isArray(payload.data.data) ? payload.data.data : (Array.isArray(payload.data.reports) ? payload.data.reports : []),
        current_page:
         typeof payload.data.current_page === 'number'
          ? payload.data.current_page
@@ -269,6 +269,68 @@ export const fetchReportsList = async (
   }
 
   throw new Error('Unable to fetch reports. Please try again.');
+ }
+};
+
+export const fetchDailyReportList = async (
+ token: string,
+ page: number = 1,
+): Promise<ReportListResult> => {
+ try {
+  const response = await axios.get(buildApiUrl(API_ENDPOINTS.dailyReportList), {
+   params: {
+    page,
+   },
+   headers: {
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json',
+   },
+  });
+
+  const payload =
+   response.data && typeof response.data === 'object'
+    ? (response.data as Record<string, unknown>)
+    : {};
+
+  console.log('Daily Report List API response:', payload);
+
+  const message =
+   typeof payload.message === 'string' && payload.message.trim()
+    ? payload.message
+    : 'Reports fetched successfully.';
+  const success = getSuccessStatus(payload);
+
+  return {
+   success,
+   message,
+   data: isRecord(payload.data)
+    ? {
+       data: Array.isArray(payload.data.data) ? payload.data.data : (Array.isArray(payload.data.reports) ? payload.data.reports : []),
+       current_page:
+        typeof payload.data.current_page === 'number'
+         ? payload.data.current_page
+         : 1,
+       last_page:
+        typeof payload.data.last_page === 'number' ? payload.data.last_page : 1,
+       total: typeof payload.data.total === 'number' ? payload.data.total : 0,
+      }
+    : null,
+  };
+ } catch (error) {
+  if (axios.isAxiosError(error)) {
+   const payload = error.response?.data;
+   const fallback = error.response?.status
+    ? `Failed to fetch daily reports with status ${error.response.status}`
+    : 'Unable to fetch daily reports. Please try again.';
+
+   throw new Error(getErrorMessage(payload, fallback));
+  }
+
+  if (error instanceof Error) {
+   throw error;
+  }
+
+  throw new Error('Unable to fetch daily reports. Please try again.');
  }
 };
 

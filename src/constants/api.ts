@@ -11,10 +11,14 @@ export const API_ENDPOINTS = {
  deleteManualLog: 'delete-manual-log',
  dailySummary: 'daily-summary',
  reportsList: 'reports-list',
- reportDetail: 'report-detail',
  travelLogDetail: 'travel-logs-detail',
  homeScreen: 'home-screen',
  updateManualLog: 'manual-log-update',
+ travelLogUpdate: 'travel-log-update',
+ travelLogDelete: 'travel-log-delete',
+ dailyReportList: 'daily-report-list',
+ checkLocation: 'get-check-location',
+ startBillable: 'start-billable',
 } as const;
 
 export const buildApiUrl = (endpoint: string) => {

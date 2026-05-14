@@ -52,9 +52,14 @@ const parseBillableStatus = (value: unknown): boolean => {
    return true;
   }
   if (
-   ['0', 'false', 'no', 'non-billable', 'non_billable', 'non billable'].includes(
-    normalized,
-   )
+   [
+    '0',
+    'false',
+    'no',
+    'non-billable',
+    'non_billable',
+    'non billable',
+   ].includes(normalized)
   ) {
    return false;
   }
@@ -525,8 +530,8 @@ const createStyles = (theme: AppTheme) => {
    // elevation: 0.1,
   },
   logCardPressed: {
-   backgroundColor: theme.colors.primary,
-   borderColor: theme.colors.primary,
+   backgroundColor: 'transparent',
+   borderColor: 'transparent',
   },
   logHeader: {
    flexDirection: 'row',

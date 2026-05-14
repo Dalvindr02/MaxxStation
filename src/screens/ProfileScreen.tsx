@@ -1,4 +1,4 @@
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
  ScrollView,
  StyleSheet,
@@ -9,9 +9,11 @@ import {
  RefreshControl,
  Linking,
  ActivityIndicator,
+ InteractionManager,
+ StyleProp,
+ ViewStyle,
 } from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
-import {useNavigation} from '@react-navigation/native';
 import Feather from 'react-native-vector-icons/Feather';
 import DeviceInfo from 'react-native-device-info';
 import NetInfo from '@react-native-community/netinfo';
@@ -27,12 +29,30 @@ import {logout} from '../store/authSlice';
 import {moderateScale} from 'react-native-size-matters';
 import {logoutRequest} from '../services/authService';
 
+type ProfileNotice = {
+ message: string;
+ variant: 'success' | 'error' | 'warning' | 'info';
+};
+
+const ProfileCard = ({
+ children,
+ style,
+}: {
+ children: React.ReactNode;
+ style: StyleProp<ViewStyle>;
+}) => {
+ if (Platform.OS === 'ios') {
+  return <View style={style}>{children}</View>;
+ }
+
+ return <AnimatedCard style={style}>{children}</AnimatedCard>;
+};
+
 export const ProfileScreen = () => {
  const dispatch = useAppDispatch();
- const navigation = useNavigation();
  const {theme} = useAppTheme();
  const styles = useMemo(() => createStyles(theme), [theme]);
- const {showDialog} = useDialog();
+ const {showDialog, hideDialog} = useDialog();
 
  // Get user data from Redux
  const authUser = useAppSelector(state => state.auth.user);
@@ -47,18 +67,130 @@ export const ProfileScreen = () => {
  const [_lastSync, setLastSync] = useState('');
  const [refreshing, setRefreshing] = useState(false);
  const [isLoggingOut, setIsLoggingOut] = useState(false);
+ const [isPreparingLogout, setIsPreparingLogout] = useState(false);
+ const [profileNotice, setProfileNotice] = useState<ProfileNotice | null>(null);
+ const isMountedRef = useRef(true);
+ const logoutInFlightRef = useRef(false);
+ const logoutAbortRef = useRef<AbortController | null>(null);
+ const deviceRequestIdRef = useRef(0);
+ const logoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+ const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
- const loadDeviceInfo = async () => {
+ const clearProfileNotice = useCallback(() => {
+  if (noticeTimerRef.current) {
+   clearTimeout(noticeTimerRef.current);
+   noticeTimerRef.current = null;
+  }
+
+  if (isMountedRef.current) {
+   setProfileNotice(null);
+  }
+ }, []);
+
+ const showProfileNotice = useCallback(
+  (
+   notice: ProfileNotice,
+   options?: {
+    duration?: number;
+    afterHide?: () => void;
+   },
+  ) => {
+   if (!isMountedRef.current) return;
+
+   if (noticeTimerRef.current) {
+    clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = null;
+   }
+
+   setProfileNotice(notice);
+
+   noticeTimerRef.current = setTimeout(() => {
+    noticeTimerRef.current = null;
+    if (!isMountedRef.current) return;
+
+    setProfileNotice(null);
+    options?.afterHide?.();
+   }, options?.duration ?? 2400);
+  },
+  [],
+ );
+
+ const showProfileDialog = useCallback(
+  (config: Parameters<typeof showDialog>[0]) => {
+   if (Platform.OS === 'ios') {
+    showProfileNotice({
+     message: config.message,
+     variant: config.variant === 'message' ? 'info' : config.variant ?? 'info',
+    });
+    return;
+   }
+
+   showDialog(config);
+  },
+  [showDialog, showProfileNotice],
+ );
+
+ const waitForLogoutCleanup = useCallback((duration: number) => {
+  return new Promise<void>(resolve => {
+   logoutTimerRef.current = setTimeout(() => {
+    logoutTimerRef.current = null;
+    resolve();
+   }, duration);
+  });
+ }, []);
+
+ const waitForInteractions = useCallback(() => {
+  return new Promise<void>(resolve => {
+   InteractionManager.runAfterInteractions(() => resolve());
+  });
+ }, []);
+
+ const completeLocalLogout = useCallback(async () => {
+  if (!isMountedRef.current) return;
+
+  hideDialog();
+  clearProfileNotice();
+  deviceRequestIdRef.current += 1;
+  setRefreshing(false);
+  setIsLoggingOut(true);
+  setIsPreparingLogout(true);
+
+  await waitForInteractions();
+  await waitForLogoutCleanup(Platform.OS === 'ios' ? 350 : 50);
+
+  if (isMountedRef.current) {
+   dispatch(logout());
+  }
+ }, [
+  clearProfileNotice,
+  dispatch,
+  hideDialog,
+  waitForInteractions,
+  waitForLogoutCleanup,
+ ]);
+
+ const loadDeviceInfo = useCallback(async () => {
+  const requestId = deviceRequestIdRef.current + 1;
+  deviceRequestIdRef.current = requestId;
+
+  const canUpdate = () =>
+   isMountedRef.current &&
+   requestId === deviceRequestIdRef.current &&
+   !logoutInFlightRef.current;
+
   try {
    DeviceInfo.getAvailableLocationProviders().then(providers => {
-    setGpsEnabled(Boolean(providers?.gps));
+    if (canUpdate()) {
+     setGpsEnabled(Boolean(providers?.gps));
+    }
    });
    const level = await DeviceInfo.getBatteryLevel();
+   if (!canUpdate()) return;
    const percent = Math.round(level * 100);
    setBattery(percent);
 
    if (percent < 15) {
-    showDialog({
+    showProfileDialog({
      title: 'Low Battery',
      message: 'Battery below 15%. Tracking may stop in background.',
      variant: 'error',
@@ -75,18 +207,21 @@ export const ProfileScreen = () => {
      : PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION;
 
    const result = await check(permission);
-   if (result !== 'granted') {
+   if (canUpdate() && result !== 'granted') {
     setGpsEnabled(false);
    }
   } catch (e) {
    console.log(e);
   }
- };
+ }, [showProfileDialog]);
 
  useEffect(() => {
+  isMountedRef.current = true;
   loadDeviceInfo();
 
   const unsubscribeNet = NetInfo.addEventListener(state => {
+   if (!isMountedRef.current || logoutInFlightRef.current) return;
+
    if (state.type === 'cellular') {
     setNetwork(state.details?.cellularGeneration?.toUpperCase() || 'Cellular');
    } else {
@@ -95,14 +230,29 @@ export const ProfileScreen = () => {
   });
 
   return () => {
+   isMountedRef.current = false;
+   deviceRequestIdRef.current += 1;
+   logoutAbortRef.current?.abort();
+   if (logoutTimerRef.current) {
+    clearTimeout(logoutTimerRef.current);
+    logoutTimerRef.current = null;
+   }
+   if (noticeTimerRef.current) {
+    clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = null;
+   }
    unsubscribeNet();
   };
- }, []);
+ }, [loadDeviceInfo]);
 
  const onRefresh = async () => {
+  if (logoutInFlightRef.current) return;
+
   setRefreshing(true);
   await loadDeviceInfo();
-  setRefreshing(false);
+  if (isMountedRef.current && !logoutInFlightRef.current) {
+   setRefreshing(false);
+  }
  };
 
  const getBatteryColor = () => {
@@ -112,8 +262,10 @@ export const ProfileScreen = () => {
  };
 
  const handleSignOut = async () => {
+  if (logoutInFlightRef.current) return;
+
   if (!token) {
-   showDialog({
+   showProfileDialog({
     title: 'Error',
     message: 'No auth token found. Unable to logout.',
     variant: 'error',
@@ -122,28 +274,36 @@ export const ProfileScreen = () => {
    return;
   }
 
+  logoutInFlightRef.current = true;
+  logoutAbortRef.current = new AbortController();
+  hideDialog();
   setIsLoggingOut(true);
-  let willNavigateAway = false;
 
   try {
-   const result = await logoutRequest(token);
+   const result = await logoutRequest(token, logoutAbortRef.current.signal);
+   if (!isMountedRef.current) return;
 
    if (result.success) {
-    willNavigateAway = true;
-    showDialog({
-     title: 'Logged Out',
-     message: result.message || 'You have been logged out successfully.',
-     variant: 'success',
-     dismissOnBackdrop: false,
-     primaryAction: {
-      label: 'Okay',
-      onPress: () => {
-       dispatch(logout());
+    if (Platform.OS === 'ios') {
+     showProfileNotice(
+      {
+       message: result.message || 'You have been logged out successfully.',
+       variant: 'success',
       },
-     },
-    });
+      {
+       duration: 650,
+       afterHide: () => {
+        logoutInFlightRef.current = true;
+        completeLocalLogout();
+       },
+      },
+     );
+    } else {
+     await completeLocalLogout();
+    }
    } else {
-    showDialog({
+    logoutInFlightRef.current = false;
+    showProfileDialog({
      title: 'Logout Failed',
      message: result.message || 'Unable to logout. Please try again.',
      variant: 'error',
@@ -151,24 +311,44 @@ export const ProfileScreen = () => {
     });
    }
   } catch (error) {
+   if (!isMountedRef.current) return;
    console.error('Error logging out:', error);
-   showDialog({
-    title: 'Network Error',
-    message:
-     'Could not reach the server. You can force-logout from this device.',
-    variant: 'warning',
-    dismissOnBackdrop: false,
-    primaryAction: {
-     label: 'Force Logout',
-     onPress: () => {
-      willNavigateAway = true;
-      dispatch(logout());
+   if (Platform.OS === 'ios') {
+    showProfileNotice(
+     {
+      message: 'Could not reach the server. Signing out on this device.',
+      variant: 'warning',
      },
-    },
-    secondaryAction: {label: 'Cancel'},
-   });
+     {
+      duration: 850,
+      afterHide: () => {
+       logoutInFlightRef.current = true;
+       completeLocalLogout();
+      },
+     },
+    );
+   } else {
+    logoutInFlightRef.current = false;
+    showDialog({
+     title: 'Network Error',
+     message:
+      'Could not reach the server. You can force-logout from this device.',
+     variant: 'warning',
+     dismissOnBackdrop: false,
+     primaryAction: {
+      label: 'Force Logout',
+      onPress: () => {
+       if (logoutInFlightRef.current) return;
+       logoutInFlightRef.current = true;
+       completeLocalLogout();
+      },
+     },
+     secondaryAction: {label: 'Cancel'},
+    });
+   }
   } finally {
-   if (!willNavigateAway) {
+   logoutAbortRef.current = null;
+   if (isMountedRef.current && !logoutInFlightRef.current) {
     setIsLoggingOut(false);
    }
   }
@@ -304,11 +484,15 @@ export const ProfileScreen = () => {
  const getAttendanceData = (): {present: string; percentage: string} => {
   // Try homeData first
   if (homeData) {
-    const present = homeData.attendance_present || homeData.present_days;
-    const percentage = homeData.attendance_percentage || homeData.present_percentage;
-    if (present && percentage) {
-      return {present: String(present), percentage: String(percentage)};
-    }
+   const apiData = homeData.data || homeData;
+   const present = apiData.present_days ?? apiData.attendance_present;
+   const percentage =
+    apiData.monthly_attendance_percentage ??
+    apiData.attendance_percentage ??
+    apiData.present_percentage;
+   if (present !== undefined && percentage !== undefined) {
+    return {present: String(present), percentage: `${percentage}%`};
+   }
   }
 
   if (!loginData) return {present: '22/23', percentage: '95.6%'};
@@ -333,11 +517,13 @@ export const ProfileScreen = () => {
  const getHoursLogged = (): {hours: string; overtime: string} => {
   // Try homeData first
   if (homeData) {
-    const hours = homeData.hours_logged || homeData.total_hours;
-    const overtime = homeData.overtime_hours || homeData.extra_hours;
-    if (hours && overtime) {
-      return {hours: String(hours), overtime: String(overtime)};
-    }
+   const apiData = homeData.data || homeData;
+   const hours =
+    apiData.total_logged_hours ?? apiData.hours_logged ?? apiData.total_hours;
+   const overtime = apiData.overtime_hours ?? apiData.extra_hours;
+   if (hours !== undefined && overtime !== undefined) {
+    return {hours: String(hours), overtime: String(overtime)};
+   }
   }
 
   if (!loginData) return {hours: '176.5h', overtime: '+8.5h'};
@@ -359,11 +545,20 @@ export const ProfileScreen = () => {
  const getLogsCreated = (): {count: string; status: string} => {
   // Try homeData first
   if (homeData) {
-    const count = homeData.logs_count || homeData.total_logs;
-    const status = homeData.logs_status || homeData.verification_status;
-    if (count && status) {
-      return {count: String(count), status: String(status)};
-    }
+   const apiData = homeData.data || homeData;
+   if (apiData.approved_logs !== undefined) {
+    const approvedCount = apiData.approved_logs;
+    const disapprovedCount = apiData.disapproved_logs ?? 0;
+    const total = approvedCount + disapprovedCount;
+    const status =
+     disapprovedCount > 0 ? `${disapprovedCount} disapproved` : 'All approved';
+    return {count: String(total), status};
+   }
+   const count = apiData.logs_count ?? apiData.total_logs;
+   const status = apiData.logs_status ?? apiData.verification_status;
+   if (count !== undefined && status !== undefined) {
+    return {count: String(count), status: String(status)};
+   }
   }
 
   if (!loginData) return {count: '48', status: 'All verified'};
@@ -383,21 +578,21 @@ export const ProfileScreen = () => {
   return {count, status};
  };
 
- const renderPolicy = (icon: string, title: string, meta: string) => (
-  <View style={styles.policyRow}>
-   <View style={styles.policyIcon}>
-    <Feather name={icon} size={14} color={theme.colors.primary} />
-   </View>
-   <View style={styles.policyContent}>
-    <Text allowFontScaling={false} style={styles.policyTitle}>
-     {title}
-    </Text>
-    <Text allowFontScaling={false} style={styles.policyMeta}>
-     {meta}
-    </Text>
-   </View>
-  </View>
- );
+ if (isPreparingLogout) {
+  return (
+   <SafeAreaView style={styles.safe}>
+    <LinearGradient
+     colors={theme.gradients.screen}
+     start={{x: 0.5, y: 0}}
+     end={{x: 0.5, y: 1}}
+     style={styles.backgroundGradient}
+    />
+    <View style={styles.logoutTransition}>
+     <ActivityIndicator size="large" color={theme.colors.primary} />
+    </View>
+   </SafeAreaView>
+  );
+ }
 
  return (
   <SafeAreaView style={styles.safe}>
@@ -407,14 +602,17 @@ export const ProfileScreen = () => {
     end={{x: 0.5, y: 1}}
     style={styles.backgroundGradient}
    />
-   <TopHeader title="Profile" rightType="avatar" />
+   <TopHeader
+    title="Profile"
+    rightType={Platform.OS === 'ios' ? 'none' : 'avatar'}
+   />
 
    <ScrollView
     showsVerticalScrollIndicator={false}
     refreshControl={
      <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
     }>
-    <AnimatedCard style={styles.profileCard}>
+    <ProfileCard style={styles.profileCard}>
      <View style={styles.avatar}>
       <Text allowFontScaling={false} style={styles.avatarText}>
        {getAvatarInitials()}
@@ -434,7 +632,7 @@ export const ProfileScreen = () => {
        ON-DUTY
       </Text>
      </View>
-
+     {/* 
      <View style={styles.employeeStatusRow}>
       <View style={styles.statusItem}>
        <Text allowFontScaling={false} style={styles.statusLabel}>
@@ -452,10 +650,10 @@ export const ProfileScreen = () => {
         {getDepartment()}
        </Text>
       </View>
-     </View>
-    </AnimatedCard>
+     </View> */}
+    </ProfileCard>
 
-    <AnimatedCard style={styles.infoCard}>
+    <ProfileCard style={styles.infoCard}>
      <Text allowFontScaling={false} style={styles.cardTitle}>
       Monthly Statistics
      </Text>
@@ -505,9 +703,9 @@ export const ProfileScreen = () => {
        </Text>
       </View>
      </View>
-    </AnimatedCard>
+    </ProfileCard>
 
-    <AnimatedCard style={styles.infoCard}>
+    <ProfileCard style={styles.infoCard}>
      <Text allowFontScaling={false} style={styles.cardTitle}>
       SHIFT DETAILS
      </Text>
@@ -520,18 +718,18 @@ export const ProfileScreen = () => {
         {getShiftTiming().start} - {getShiftTiming().end}
        </Text>
       </View>
-      <View>
+      {/* <View>
        <Text allowFontScaling={false} style={styles.infoLabel}>
         Shift Type
        </Text>
        <Text allowFontScaling={false} style={styles.infoValue}>
         {getShiftType()}
        </Text>
-      </View>
+      </View> */}
      </View>
-    </AnimatedCard>
+    </ProfileCard>
 
-    <AnimatedCard style={styles.infoCard}>
+    <ProfileCard style={styles.infoCard}>
      <Text allowFontScaling={false} style={styles.cardTitle}>
       Account Information
      </Text>
@@ -578,9 +776,9 @@ export const ProfileScreen = () => {
        </View>
       </View>
      </View>
-    </AnimatedCard>
+    </ProfileCard>
 
-    {/* <AnimatedCard style={styles.infoCard}>
+    {/* <ProfileCard style={styles.infoCard}>
      <Text allowFontScaling={false} style={styles.cardTitle}>
       Organization Policies
      </Text>
@@ -588,7 +786,7 @@ export const ProfileScreen = () => {
      {renderPolicy('clock', 'Attendance Rules', '15m grace period')}
      {renderPolicy('credit-card', 'Expense Limits', '$500 / Month')}
      {renderPolicy('shield', 'Overtime Policy', 'Pre-approval required')}
-    </AnimatedCard> */}
+    </ProfileCard> */}
 
     {!gpsEnabled && (
      <View style={styles.warningBanner}>
@@ -599,7 +797,7 @@ export const ProfileScreen = () => {
      </View>
     )}
 
-    <AnimatedCard style={styles.infoCard}>
+    <ProfileCard style={styles.infoCard}>
      <Text allowFontScaling={false} style={styles.cardTitle}>
       Device Health
      </Text>
@@ -645,8 +843,7 @@ export const ProfileScreen = () => {
        </Text>
       </View>
      </View>
-    </AnimatedCard>
-
+    </ProfileCard>
 
     <TouchableOpacity
      activeOpacity={0.9}
@@ -664,7 +861,11 @@ export const ProfileScreen = () => {
       style={styles.signOutGradient}>
       <View style={styles.signOutIconWrap}>
        {isLoggingOut ? (
-        <ActivityIndicator key="profile-loading" size="small" color={theme.colors.primary} />
+        <ActivityIndicator
+         key="profile-loading"
+         size="small"
+         color={theme.colors.primary}
+        />
        ) : (
         <Feather name="log-out" size={18} color={theme.colors.primary} />
        )}
@@ -682,11 +883,20 @@ export const ProfileScreen = () => {
       </View>
      </LinearGradient>
     </TouchableOpacity>
-
+    {/* 
     <Text allowFontScaling={false} style={styles.footerNote}>
      Your location and activity logs are only tracked while on-duty.
-    </Text>
+    </Text> */}
    </ScrollView>
+   {profileNotice ? (
+    <View
+     pointerEvents="none"
+     style={[styles.profileNotice, styles[profileNotice.variant]]}>
+     <Text allowFontScaling={false} style={styles.profileNoticeText}>
+      {profileNotice.message}
+     </Text>
+    </View>
+   ) : null}
   </SafeAreaView>
  );
 };
@@ -706,6 +916,51 @@ const createStyles = (theme: AppTheme) => {
   backgroundGradient: {
    ...StyleSheet.absoluteFillObject,
    opacity: 0.9,
+  },
+  logoutTransition: {
+   flex: 1,
+   alignItems: 'center',
+   justifyContent: 'center',
+  },
+  profileNotice: {
+   position: 'absolute',
+   left: 18,
+   right: 18,
+   bottom: 26,
+   minHeight: 46,
+   borderRadius: 14,
+   paddingHorizontal: 14,
+   paddingVertical: 12,
+   justifyContent: 'center',
+   borderWidth: 1,
+   shadowColor: '#000',
+   shadowOffset: {width: 0, height: 8},
+   shadowOpacity: 0.18,
+   shadowRadius: 14,
+   elevation: 8,
+  },
+  profileNoticeText: {
+   color: '#FFFFFF',
+   fontSize: 12,
+   fontWeight: '700',
+   lineHeight: 17,
+   textAlign: 'center',
+  },
+  success: {
+   backgroundColor: 'rgba(16,185,129,0.96)',
+   borderColor: 'rgba(255,255,255,0.22)',
+  },
+  error: {
+   backgroundColor: 'rgba(239,68,68,0.96)',
+   borderColor: 'rgba(255,255,255,0.22)',
+  },
+  warning: {
+   backgroundColor: 'rgba(217,119,6,0.96)',
+   borderColor: 'rgba(255,255,255,0.22)',
+  },
+  info: {
+   backgroundColor: 'rgba(37,99,235,0.96)',
+   borderColor: 'rgba(255,255,255,0.22)',
   },
   container: {
    padding: 18,
