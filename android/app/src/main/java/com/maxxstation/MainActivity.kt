@@ -10,7 +10,10 @@ class MainActivity : ReactActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     setTheme(R.style.AppTheme)
-    super.onCreate(savedInstanceState)
+    // Avoid restoring native fragment / view state after process death or OEM task
+    // switches — a frequent source of crashes when resuming with react-native-screens
+    // and MapView together.
+    super.onCreate(null)
   }
 
   /**

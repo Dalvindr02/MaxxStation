@@ -14,20 +14,14 @@ import {
  handleNotifeeBackgroundEvent,
 } from './src/services/notificationService';
 
+// FCM background delivery: single handler. @react-native-firebase/messaging already
+// registers AppRegistry headless task "ReactNativeFirebaseMessagingHeadlessTask"
+// internally — do NOT register a second task name (stale RNFirebaseBackgroundMessage
+// duplicates were never invoked by native and added noise during startup).
 messaging().setBackgroundMessageHandler(async remoteMessage => {
  console.log('setBackgroundMessageHandler invoked', remoteMessage?.messageId);
  return handleIncomingRemoteMessage(remoteMessage);
 });
 notifee.onBackgroundEvent(handleNotifeeBackgroundEvent);
-AppRegistry.registerHeadlessTask(
- 'RNFirebaseBackgroundMessage',
- () => async remoteMessage => {
-  console.log(
-   'RNFirebaseBackgroundMessage headless task invoked',
-   remoteMessage?.messageId,
-  );
-  return handleIncomingRemoteMessage(remoteMessage);
- },
-);
 
 AppRegistry.registerComponent(appName, () => App);

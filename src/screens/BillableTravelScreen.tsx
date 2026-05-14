@@ -1,22 +1,13 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
-  Dimensions,
   AppState,
   Modal,
 } from 'react-native';
-import Animated, {
-  FadeInDown,
-  FadeInUp,
-  Layout,
-  useAnimatedStyle,
-  withSpring,
-} from 'react-native-reanimated';
 import Feather from 'react-native-vector-icons/Feather';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
@@ -34,11 +25,9 @@ import { fetchProjects, setSelectedProject } from '../store/projectsSlice';
 import { ProjectPickerModal } from '../components/Logs/ProjectPickerModal';
 import { TopHeader } from '../components/TopHeader';
 import { AnimatedCard, ActionButton } from '../components/ui';
-import { startBillableAPI, updateBillableLocationAPI } from '../services/billableTravelService';
+import { updateBillableLocationAPI } from '../services/billableTravelService';
 import { geocodeAddressAPI } from '../services/backendMapService';
 import { LatLng } from '../constants/workLocation';
-
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 const sleep = (time: number) => new Promise<void>((resolve) => setTimeout(resolve, time));
 
@@ -51,19 +40,19 @@ const backgroundTaskOptions = {
     type: 'mipmap',
   },
   color: '#45CAFF',
+  // Required for targetSdk 34+ with FOREGROUND_SERVICE_LOCATION.
+  foregroundServiceType: ['location'],
   parameters: {
     delay: 1000,
   },
 };
 
-const keepAliveTask = async (taskDataArguments: any) => {
-  const { delay } = taskDataArguments;
-  await new Promise<void>(async (resolve) => {
-    while (BackgroundJob.isRunning()) {
-      await sleep(delay);
-    }
-    resolve();
-  });
+/** Keeps Android FGS alive; location updates run in watchPosition, not here. */
+const keepAliveTask = async (taskDataArguments?: { delay?: number }) => {
+  const delay = taskDataArguments?.delay ?? 1000;
+  while (BackgroundJob.isRunning()) {
+    await sleep(delay);
+  }
 };
 
 export default function BillableTravelScreen() {
@@ -74,7 +63,7 @@ export default function BillableTravelScreen() {
   const dispatch = useAppDispatch();
 
   // Redux State
-  const { items: projects, selectedProjectId, isLoading: isProjectsLoading } = useAppSelector(
+  const { items: projects, selectedProjectId } = useAppSelector(
     state => state.projects,
   );
   const authToken = useAppSelector(state => state.auth.token);
@@ -96,23 +85,56 @@ export default function BillableTravelScreen() {
   const appStateRef = useRef(AppState.currentState);
   // Stable ref for selectedProjectId so BG location callback never has stale closure
   const selectedProjectIdRef = useRef(selectedProjectId);
+  const authTokenRef = useRef(authToken);
+  const isTrackingRef = useRef(isTracking);
+  const currentCoordsRef = useRef<LatLng | null>(null);
 
   // Keep the ref in sync with Redux state without re-running heavy effects
   useEffect(() => {
     selectedProjectIdRef.current = selectedProjectId;
   }, [selectedProjectId]);
 
+  useEffect(() => {
+    authTokenRef.current = authToken;
+  }, [authToken]);
+
+  useEffect(() => {
+    isTrackingRef.current = isTracking;
+  }, [isTracking]);
+
+  useEffect(() => {
+    currentCoordsRef.current = currentCoords;
+  }, [currentCoords]);
+
   // AppState listener — registered ONCE on mount, never re-subscribed.
   // Registering inside an effect that depends on [isTracking] caused a new
   // listener to be added on every tracking toggle, leaking duplicate handlers.
   useEffect(() => {
+    isMounted.current = true;
+
     const appStateSubscription = AppState.addEventListener('change', nextAppState => {
+      const prev = appStateRef.current;
+      appStateRef.current = nextAppState;
+
       if (nextAppState === 'background') {
         console.log('[BillableTravel] App moved to background');
-      } else if (nextAppState === 'active' && appStateRef.current !== 'active') {
+      } else if (nextAppState === 'active' && prev !== 'active') {
         console.log('[BillableTravel] App returned to foreground');
+        const coords = currentCoordsRef.current;
+        if (isTrackingRef.current && coords && mapRef.current) {
+          requestAnimationFrame(() => {
+            mapRef.current?.animateToRegion(
+              {
+                latitude: coords.latitude,
+                longitude: coords.longitude,
+                latitudeDelta: 0.01,
+                longitudeDelta: 0.01,
+              },
+              400,
+            );
+          });
+        }
       }
-      appStateRef.current = nextAppState;
     });
 
     if (projects.length === 0) {
@@ -187,6 +209,7 @@ export default function BillableTravelScreen() {
     }
 
     setIsSubmitting(true);
+    let backgroundStarted = false;
     try {
       // Get initial position
       const position = await new Promise<Geolocation.GeoPosition>((resolve, reject) => {
@@ -217,6 +240,9 @@ export default function BillableTravelScreen() {
       // Start BackgroundJob to keep the app alive (creates a foreground service on Android)
       if (!BackgroundJob.isRunning()) {
         await BackgroundJob.start(keepAliveTask, backgroundTaskOptions);
+        backgroundStarted = BackgroundJob.isRunning();
+      } else {
+        backgroundStarted = true;
       }
 
       // Start continuous location watching
@@ -236,12 +262,13 @@ export default function BillableTravelScreen() {
           setCurrentCoords({ latitude: lat, longitude: lng });
 
           const projectId = selectedProjectIdRef.current;
+          const token = authTokenRef.current;
           if (projectId) {
             updateBillableLocationAPI({
               project_id: Number(projectId),
               latitude: lat,
               longitude: lng,
-            }, authToken).catch(err => console.error('[Geolocation] API Error:', err));
+            }, token).catch(err => console.error('[Geolocation] API Error:', err));
           }
         },
         (error) => {
@@ -254,6 +281,7 @@ export default function BillableTravelScreen() {
           fastestInterval: 2000,
           showsBackgroundLocationIndicator: true,
           forceRequestLocation: true,
+          ...(Platform.OS === 'ios' ? { allowsBackgroundLocationUpdates: true } : {}),
         }
       );
 
@@ -261,6 +289,13 @@ export default function BillableTravelScreen() {
         setIsTracking(true);
       }
     } catch (error: any) {
+      if (watchId.current !== null) {
+        Geolocation.clearWatch(watchId.current);
+        watchId.current = null;
+      }
+      if (backgroundStarted && BackgroundJob.isRunning()) {
+        await BackgroundJob.stop().catch(() => null);
+      }
       if (isMounted.current) {
         showDialog({
           title: 'Start Failed',
@@ -351,7 +386,7 @@ export default function BillableTravelScreen() {
                       title: 'Current Position',
                       address: geocoded.address,
                     });
-                  } catch (e) {
+                  } catch {
                     setSelectedPoint({
                       title: 'Current Position',
                       address: `${currentCoords.latitude.toFixed(6)}, ${currentCoords.longitude.toFixed(6)}`,

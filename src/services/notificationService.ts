@@ -751,9 +751,8 @@ export const syncShiftNotificationSchedule = async (options: {
 };
 
 // ---------------------------------------------------------------------------
-// Pipeline init
-// FIX 2 — setBackgroundMessageHandler is also called here as a safety net
-// in case registerBackgroundMessageHandler was not called from index.js
+// Pipeline init — foreground listeners + categories. Background FCM handler
+// is registered once in index.js before the root component mounts.
 // ---------------------------------------------------------------------------
 
 export const initializeNotificationPipeline = async () => {
@@ -784,17 +783,15 @@ export const initializeNotificationPipeline = async () => {
  messageUnsubscribe?.();
  foregroundListener?.();
 
- // FIX 2a — foreground FCM listener
+ // Foreground FCM listener
  messageUnsubscribe = messaging().onMessage(async remoteMessage => {
   console.log('[FCM] Foreground message received:', remoteMessage?.messageId);
   await handleIncomingRemoteMessage(remoteMessage);
  });
 
- // FIX 2b — background FCM handler (safety net if index.js call is missing)
- messaging().setBackgroundMessageHandler(async remoteMessage => {
-  console.log('[FCM] Background message received:', remoteMessage?.messageId);
-  await handleIncomingRemoteMessage(remoteMessage);
- });
+ // Background FCM is registered once in index.js (before App mounts). Do not call
+ // setBackgroundMessageHandler again here — a second registration replaces the
+ // handler at an unpredictable time relative to native delivery.
 
  // Foreground notifee event listener
  foregroundListener = notifee.onForegroundEvent(async event => {

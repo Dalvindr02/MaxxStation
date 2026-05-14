@@ -66,6 +66,12 @@
           <action android:name="io.invertase.firebase.messaging.RECEIVE_DIRECT_BOOT" />
         </intent-filter>
       </receiver>
+      <!-- react-native-background-actions: required on API 34+ when using location FGS -->
+      <service
+        android:name="com.asterinet.react.bgactions.RNBackgroundActionsTask"
+        android:foregroundServiceType="location"
+        android:exported="false"
+        tools:node="merge" />
     </application>
     
 </manifest>
