@@ -1,5 +1,5 @@
-import React, {useMemo} from 'react';
-import {Platform} from 'react-native';
+import React, {useEffect, useMemo, useState} from 'react';
+import {Platform, View} from 'react-native';
 import {
  DarkTheme as NavigationDarkTheme,
  DefaultTheme as NavigationDefaultTheme,
@@ -37,6 +37,8 @@ import {
  flushPendingNotificationNavigation,
  navigationRef,
 } from './rootNavigation';
+import type {NavigationState, PartialState} from '@react-navigation/native';
+import {clearBillableTravelSession} from '../services/billableTravelSessionStorage';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tabs = createBottomTabNavigator();
@@ -126,6 +128,27 @@ export const AppNavigator = () => {
  const isAuthenticated = useAppSelector(state => state.auth.isAuthenticated);
  const {theme, resolvedThemeMode} = useAppTheme();
 
+ const [navBootstrapReady, setNavBootstrapReady] = useState(false);
+
+ useEffect(() => {
+  setNavBootstrapReady(false);
+  let cancelled = false;
+  (async () => {
+   try {
+    if (!isAuthenticated) {
+     await clearBillableTravelSession();
+    }
+   } finally {
+    if (!cancelled) {
+     setNavBootstrapReady(true);
+    }
+   }
+  })();
+  return () => {
+   cancelled = true;
+  };
+ }, [isAuthenticated]);
+
  const navigationTheme = useMemo(
   () => ({
    ...(resolvedThemeMode === 'dark'
@@ -146,8 +169,15 @@ export const AppNavigator = () => {
   [resolvedThemeMode, theme],
  );
 
+ if (!navBootstrapReady) {
+  return (
+   <View style={{flex: 1, backgroundColor: theme.colors.background}} />
+  );
+ }
+
  return (
   <NavigationContainer
+   key={isAuthenticated ? 'nav-authenticated' : 'nav-guest'}
    ref={navigationRef}
    theme={navigationTheme}
    onReady={flushPendingNotificationNavigation}>

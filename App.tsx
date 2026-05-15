@@ -2,7 +2,6 @@ import React from 'react';
 import {Provider} from 'react-redux';
 import {StatusBar, AppState} from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
-import {PersistGate} from 'redux-persist/integration/react';
 import {SafeAreaProvider} from 'react-native-safe-area-context';
 import {AppNavigator} from './src/navigation/AppNavigator';
 import {ThemeProvider, useAppTheme} from './src/context/ThemeContext';
@@ -143,13 +142,31 @@ const AppContent = () => {
 // ---------------------------------------------------------------------------
 
 function App() {
+  const [isReady, setIsReady] = React.useState(persistor.getState().bootstrapped);
+
+  React.useEffect(() => {
+    if (isReady) return;
+    
+    // Catch the case where it bootstrapped between useState and useEffect
+    if (persistor.getState().bootstrapped) {
+      setIsReady(true);
+      return;
+    }
+
+    const unsubscribe = persistor.subscribe(() => {
+      if (persistor.getState().bootstrapped) {
+        setIsReady(true);
+        unsubscribe();
+      }
+    });
+    return unsubscribe;
+  }, [isReady]);
+
   return (
     <SafeAreaProvider>
       <Provider store={store}>
         <ThemeProvider>
-          <PersistGate loading={<LiveTrackingSplash />} persistor={persistor}>
-            <AppContent />
-          </PersistGate>
+          {isReady ? <AppContent /> : <LiveTrackingSplash />}
         </ThemeProvider>
       </Provider>
     </SafeAreaProvider>
