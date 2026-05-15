@@ -65,7 +65,8 @@ export type NotificationActionId =
  | 'open-report'
  | 'bill-time'
  | 'open-map'
- | 'check-in';
+ | 'check-in'
+ | 'stop-billable';
 
 // ---------------------------------------------------------------------------
 // Event bus
@@ -257,6 +258,7 @@ const interactiveActions: NotificationActionId[] = [
  'bill-time',
  'open-map',
  'check-in',
+ 'stop-billable',
 ];
 
 const isInteractiveAction = (
@@ -1041,6 +1043,10 @@ const processNotificationAction = async (
   case 'check-in':
    console.log('[Notification] CHECK_IN pressed → emitting check-in');
    notificationEvents.emit('check-in');
+   break;
+  case 'stop-billable':
+   console.log('[Notification] STOP_BILLABLE pressed → emitting stop-billable');
+   notificationEvents.emit('stop-billable');
    break;
   case 'OPEN_MAP':
   case 'open-map':

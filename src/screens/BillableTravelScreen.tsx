@@ -1,4 +1,5 @@
-import React, {useEffect, useMemo, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import notifee from '@notifee/react-native';
 import {
  Platform,
  StyleSheet,
@@ -27,15 +28,17 @@ import {TopHeader} from '../components/TopHeader';
 import {AnimatedCard, ActionButton} from '../components/ui';
 import {updateBillableLocationAPI} from '../services/billableTravelService';
 import {geocodeAddressAPI} from '../services/backendMapService';
+import {notificationEvents} from '../services/notificationService';
 import {LatLng} from '../constants/workLocation';
 import {
  clearBillableTravelSession,
  persistBillableTravelSession,
- readBillableTravelSession,
 } from '../services/billableTravelSessionStorage';
 
 const sleep = (time: number) =>
  new Promise<void>(resolve => setTimeout(resolve, time));
+
+let activeBackgroundRunId: string | null = null;
 
 const backgroundTaskOptions = {
  taskName: 'BillableTravel',
@@ -51,12 +54,50 @@ const backgroundTaskOptions = {
  parameters: {
   delay: 1000,
  },
+ // Tapping the notification opens the app without starting another task.
+ linkingURI: 'maxxstation://billable',
 };
 
-/** Keeps Android FGS alive; location updates run in watchPosition, not here. */
-const keepAliveTask = async (taskDataArguments?: {delay?: number}) => {
- const delay = taskDataArguments?.delay ?? 1000;
- while (BackgroundJob.isRunning()) {
+/**
+ * FIXED: Refactored to use a loop-based getCurrentPosition for maximum reliability
+ * on aggressive Android devices (Samsung). This ensures coordinates update even
+ * when watchPosition might be throttled in the background.
+ */
+const backgroundTrackingTask = async (taskData?: {
+ token?: string;
+ projectId?: string;
+ delay?: number;
+ runId?: string;
+}) => {
+ const {token, projectId, delay = 10000, runId} = taskData || {};
+
+ while (
+  BackgroundJob.isRunning() &&
+  (!runId || activeBackgroundRunId === runId)
+ ) {
+  try {
+   const position = await new Promise<Geolocation.GeoPosition>(
+    (resolve, reject) => {
+     Geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: true,
+      timeout: 15000,
+      maximumAge: 0,
+      forceRequestLocation: true,
+     });
+    },
+   );
+
+   const {latitude, longitude} = position.coords;
+   if (projectId && token) {
+    console.log(`[BG Task] Sending coordinates: ${latitude}, ${longitude}`);
+    await updateBillableLocationAPI(
+     {project_id: Number(projectId), latitude, longitude},
+     token,
+    );
+   }
+  } catch (err) {
+   console.error('[BG Task] Tracking Error:', err);
+  }
   await sleep(delay);
  }
 };
@@ -88,6 +129,8 @@ export default function BillableTravelScreen() {
  const watchId = useRef<number | null>(null);
  const mapRef = useRef<MapView>(null);
  const isMounted = useRef(true);
+ const isStartingRef = useRef(false);
+ const isStoppingRef = useRef(false);
  const appStateRef = useRef(AppState.currentState);
  // Stable ref for selectedProjectId so BG location callback never has stale closure
  const selectedProjectIdRef = useRef(selectedProjectId);
@@ -111,6 +154,49 @@ export default function BillableTravelScreen() {
  useEffect(() => {
   currentCoordsRef.current = currentCoords;
  }, [currentCoords]);
+
+ const stopLocationWatch = useCallback(() => {
+  if (watchId.current !== null) {
+   Geolocation.clearWatch(watchId.current);
+   watchId.current = null;
+  }
+  Geolocation.stopObserving();
+ }, []);
+
+ const stopBackgroundServices = useCallback(async () => {
+  activeBackgroundRunId = null;
+  if (BackgroundJob.isRunning()) {
+   await BackgroundJob.stop().catch(() => null);
+  }
+  await notifee.stopForegroundService().catch(() => null);
+  await notifee.cancelNotification('billable-tracking').catch(() => null);
+ }, []);
+
+ const cleanupTracking = useCallback(
+  async ({clearSession = true}: {clearSession?: boolean} = {}) => {
+   stopLocationWatch();
+   await stopBackgroundServices();
+   if (clearSession) {
+    await clearBillableTravelSession();
+   }
+  },
+  [stopBackgroundServices, stopLocationWatch],
+ );
+
+ const stopTracking = useCallback(async () => {
+  if (isStoppingRef.current) {
+   return;
+  }
+  isStoppingRef.current = true;
+  try {
+   await cleanupTracking();
+   if (isMounted.current) {
+    setIsTracking(false);
+   }
+  } finally {
+   isStoppingRef.current = false;
+  }
+ }, [cleanupTracking]);
 
  // AppState listener — registered ONCE on mount, never re-subscribed.
  // Registering inside an effect that depends on [isTracking] caused a new
@@ -146,26 +232,31 @@ export default function BillableTravelScreen() {
    },
   );
 
-  if (projects.length === 0) {
-   dispatch(fetchProjects());
-  }
-
   return () => {
    isMounted.current = false;
    appStateSubscription.remove();
-
-   // Stop background task on unmount
-   if (BackgroundJob.isRunning()) {
-    BackgroundJob.stop().catch(e => console.log('Stop BackgroundJob error', e));
-   }
-   if (watchId.current !== null) {
-    Geolocation.clearWatch(watchId.current);
-    watchId.current = null;
-   }
-   clearBillableTravelSession().catch(() => null);
+   cleanupTracking().catch(error =>
+    console.warn('[BillableTravel] Cleanup on unmount failed', error),
+   );
   };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
- }, []);
+ }, [cleanupTracking]);
+
+ useEffect(() => {
+  if (projects.length === 0) {
+   dispatch(fetchProjects());
+  }
+ }, [dispatch, projects.length]);
+
+ // Listen for the 'Stop Billable' button click via the notification event bus.
+ useEffect(() => {
+  const handleStop = () => {
+   stopTracking().catch(error =>
+    console.warn('[BillableTravel] Notification stop failed', error),
+   );
+  };
+  notificationEvents.on('stop-billable', handleStop);
+  return () => notificationEvents.off('stop-billable', handleStop);
+ }, [stopTracking]);
 
  const selectedProject = useMemo(
   () => projects.find(p => p.id === selectedProjectId) || null,
@@ -197,6 +288,10 @@ export default function BillableTravelScreen() {
  };
 
  const startTracking = async () => {
+  if (isStartingRef.current || isTrackingRef.current) {
+   return;
+  }
+
   const projectIdForSession = selectedProjectIdRef.current ?? selectedProjectId;
   if (!projectIdForSession) {
    showDialog({
@@ -220,8 +315,10 @@ export default function BillableTravelScreen() {
   }
 
   setIsSubmitting(true);
-  let backgroundStarted = false;
+  isStartingRef.current = true;
   try {
+   await cleanupTracking({clearSession: false});
+
    // Get initial position
    const position = await new Promise<Geolocation.GeoPosition>(
     (resolve, reject) => {
@@ -239,29 +336,23 @@ export default function BillableTravelScreen() {
    };
    setCurrentCoords(coords);
 
-   // Call Start API
-   /* 
-      await startBillableAPI({
-        project_id: Number(projectIdForSession),
-        latitude: coords.latitude,
-        longitude: coords.longitude,
-      }, authToken);
-      */
-
-   setCurrentCoords(coords);
-
    // Start BackgroundJob to keep the app alive (creates a foreground service on Android)
+   const runId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+   activeBackgroundRunId = runId;
    if (!BackgroundJob.isRunning()) {
-    await BackgroundJob.start(keepAliveTask, backgroundTaskOptions);
-    backgroundStarted = BackgroundJob.isRunning();
-   } else {
-    backgroundStarted = true;
+    await BackgroundJob.start(backgroundTrackingTask, {
+     ...backgroundTaskOptions,
+     parameters: {
+      token: authTokenRef.current ?? undefined,
+      projectId: String(projectIdForSession),
+      delay: 5000,
+      runId,
+     },
+    });
    }
 
    // Start continuous location watching
-   if (watchId.current !== null) {
-    Geolocation.clearWatch(watchId.current);
-   }
+   stopLocationWatch();
 
    watchId.current = Geolocation.watchPosition(
     location => {
@@ -271,23 +362,10 @@ export default function BillableTravelScreen() {
      const lng = location.coords.longitude;
 
      console.log(
-      `[BillableTracking] AppState: ${AppState.currentState} | LIVE LAT: ${lat}, LIVE LNG: ${lng}`,
+      `[UI Tracking] AppState: ${AppState.currentState} | LAT: ${lat}, LNG: ${lng}`,
      );
 
      setCurrentCoords({latitude: lat, longitude: lng});
-
-     const projectId = selectedProjectIdRef.current;
-     const token = authTokenRef.current;
-     if (projectId) {
-      updateBillableLocationAPI(
-       {
-        project_id: Number(projectId),
-        latitude: lat,
-        longitude: lng,
-       },
-       token,
-      ).catch(err => console.error('[Geolocation] API Error:', err));
-     }
     },
     error => {
      console.error('[Geolocation] Watch Error:', error);
@@ -307,15 +385,28 @@ export default function BillableTravelScreen() {
     setIsTracking(true);
     persistBillableTravelSession(String(projectIdForSession)).catch(() => null);
    }
+
+   // FIXED: Show an interactive Notifee notification with a 'Stop' button
+   await notifee.displayNotification({
+    id: 'billable-tracking',
+    title: 'Live Travel Tracking',
+    body: 'Tracking billable travel location in background...',
+    android: {
+     channelId: 'maxxstation-alerts',
+     smallIcon: 'ic_launcher',
+     asForegroundService: true,
+     ongoing: true,
+     pressAction: {id: 'default'},
+     actions: [
+      {
+       title: 'Stop Billable',
+       pressAction: {id: 'stop-billable'},
+      },
+     ],
+    },
+   });
   } catch (error: any) {
-   if (watchId.current !== null) {
-    Geolocation.clearWatch(watchId.current);
-    watchId.current = null;
-   }
-   if (backgroundStarted && BackgroundJob.isRunning()) {
-    await BackgroundJob.stop().catch(() => null);
-   }
-   await clearBillableTravelSession();
+   await cleanupTracking();
    if (isMounted.current) {
     showDialog({
      title: 'Start Failed',
@@ -325,69 +416,12 @@ export default function BillableTravelScreen() {
     });
    }
   } finally {
+   isStartingRef.current = false;
    if (isMounted.current) {
     setIsSubmitting(false);
    }
   }
  };
-
- const stopTracking = async () => {
-  if (watchId.current !== null) {
-   Geolocation.clearWatch(watchId.current);
-   watchId.current = null;
-  }
-
-  if (BackgroundJob.isRunning()) {
-   await BackgroundJob.stop();
-  }
-
-  await clearBillableTravelSession();
-
-  if (isMounted.current) {
-   setIsTracking(false);
-  }
- };
-
-  // After OS process death or Activity recreation, restore watch + FGS if a session was still marked active.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const session = await readBillableTravelSession();
-        if (cancelled || !session?.active) {
-          return;
-        }
-        
-        // If the component just mounted, watchId is null.
-        // Even if BackgroundJob is running naitvely, we need to reattach the JS watchPosition!
-        if (watchId.current !== null) {
-          return;
-        }
-
-        const pid = session.projectId;
-        selectedProjectIdRef.current = pid;
-        dispatch(setSelectedProject(pid));
-        await new Promise<void>(resolve => setTimeout(resolve, 120));
-        
-        if (cancelled || !isMounted.current) {
-          return;
-        }
-        
-        // We call startTracking which will safely clear any existing watch,
-        // keep or restart the BackgroundJob, and set up the new watchPosition.
-        await startTracking();
-      } catch (err) {
-        console.warn(
-          '[BillableTravel] Auto-resume after process restore failed',
-          err,
-        );
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot resume; startTracking is stable enough via refs
-  }, [dispatch]);
 
  const toggleMapSize = () => {
   setIsMapModalVisible(true);
