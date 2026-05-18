@@ -134,6 +134,7 @@ export default function HomeScreen() {
      async position => {
       try {
        const {latitude, longitude} = position.coords;
+       console.log('[HomeScreen] Current lat long', {latitude, longitude});
        const result = await checkUserLocation({latitude, longitude}, token);
        const reminder =
         result.notification ??

@@ -392,6 +392,8 @@ export default function AttendanceScreen() {
     longitude: position.coords.longitude,
    };
 
+   console.log('[AttendanceScreen] Current lat long', coords);
+
    if (
     !Number.isFinite(coords.latitude) ||
     !Number.isFinite(coords.longitude)

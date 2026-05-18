@@ -215,10 +215,12 @@ const normalizeBackendLocationActions = (
   {id: reminder.action_2, label: reminder.action_2_title},
   {id: reminder.action_3, label: reminder.action_3_title},
  ].reduce<AttendanceAction[]>((actions, action) => {
-  if (action.id === 'OPEN_MAP') {
+  const actionId =
+   typeof action.id === 'string' ? action.id.toUpperCase() : '';
+  if (actionId === 'BILLABLE' || actionId === 'OPEN_MAP') {
    actions.push({id: 'open-map', label: action.label || 'Start Billable'});
   }
-  if (action.id === 'IGNORE') {
+  if (actionId === 'IGNORE') {
    actions.push({id: 'IGNORE', label: action.label || 'Ignore'});
   }
   return actions;
@@ -245,6 +247,7 @@ const hasBackendLocationReminderActions = (
  return (
   reminder.type === 'location_reminder' ||
   values.includes('CHECK_IN') ||
+  values.includes('BILLABLE') ||
   values.includes('OPEN_MAP') ||
   values.includes('IGNORE')
  );
@@ -774,7 +777,6 @@ export const initializeNotificationPipeline = async () => {
   {
    id: 'backend-location-reminder',
    actions: [
-    {id: 'check-in', title: 'Check In', foreground: true},
     {id: 'open-map', title: 'Start Billable', foreground: true},
     {id: 'IGNORE', title: 'Ignore'},
    ],
@@ -957,7 +959,7 @@ export const handleIncomingRemoteMessage = async (
   data?.body ||
   data?.message ||
   (isBackendLocationReminder
-   ? 'You are outside office. Please check in or open the map.'
+   ? 'You are outside office. Please check in or add manual.'
    : 'You have a new update.');
 
  // Attach action buttons only for location-reminder payloads
@@ -1036,9 +1038,11 @@ const processNotificationAction = async (
    notificationEvents.emit('stop-billable');
    break;
   case 'OPEN_MAP':
+  case 'BILLABLE':
   case 'open-map':
+  case 'billable':
    console.log(
-    '[Notification] OPEN_MAP pressed → navigating to billable travel',
+    '[Notification] BILLABLE pressed → navigating to billable travel',
    );
    await requestBillableTravelNotificationNavigation();
    await navigateToBillableTravelFromNotification();
