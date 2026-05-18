@@ -19,6 +19,7 @@ export const API_ENDPOINTS = {
  dailyReportList: 'daily-report-list',
  checkLocation: 'get-check-location',
  startBillable: 'start-billable',
+ billableTravelLogCreate: 'billable-travel-log-create',
 } as const;
 
 export const buildApiUrl = (endpoint: string) => {

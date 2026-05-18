@@ -30,8 +30,8 @@ import {SHIFT_WINDOW} from '../constants/shift';
 import {LocationStatus} from '../types/attendance';
 import {todayKey} from '../utils/date';
 import {
- navigateToAttendanceTravelFromNotification,
- requestAttendanceTravelNotificationNavigation,
+ navigateToBillableTravelFromNotification,
+ requestBillableTravelNotificationNavigation,
 } from '../navigation/rootNavigation';
 import {BackendLocationReminder} from './attendanceLocationService';
 
@@ -775,7 +775,7 @@ export const initializeNotificationPipeline = async () => {
    id: 'backend-location-reminder',
    actions: [
     {id: 'check-in', title: 'Check In', foreground: true},
-    {id: 'open-map', title: 'Open Map', foreground: true},
+    {id: 'open-map', title: 'Start Billable', foreground: true},
     {id: 'IGNORE', title: 'Ignore'},
    ],
   },
@@ -899,10 +899,6 @@ export const syncBackendLocationReminderNotification = async (
  const actions = normalizeBackendLocationActions(reminder);
  console.log('[Notification] Normalized actions →', actions);
 
- // Always force re-display — clear dedup cache so a repeated server push
- // is never silently swallowed even when the payload is identical
- renderedPayloads.delete(NotificationKey.BackendLocationReminder);
-
  await displayAttendanceNotification(NotificationKey.BackendLocationReminder, {
   title: reminder.title || 'Location Reminder',
   body:
@@ -926,16 +922,9 @@ export const syncBackendLocationReminderNotification = async (
 export const handleIncomingRemoteMessage = async (
  remoteMessage: FirebaseMessagingTypes.RemoteMessage,
 ) => {
- console.log(
-  '--------------------------------------------------',
- );
- console.log(
-  '[FCM] handleIncomingRemoteMessage → RECEIVED',
- );
- console.log(
-  '[FCM] Message ID:',
-  remoteMessage?.messageId,
- );
+ console.log('--------------------------------------------------');
+ console.log('[FCM] handleIncomingRemoteMessage → RECEIVED');
+ console.log('[FCM] Message ID:', remoteMessage?.messageId);
  console.log(
   '[FCM] Data Payload:',
   JSON.stringify(remoteMessage?.data, null, 2),
@@ -944,9 +933,7 @@ export const handleIncomingRemoteMessage = async (
   '[FCM] Notification Payload:',
   JSON.stringify(remoteMessage?.notification, null, 2),
  );
- console.log(
-  '--------------------------------------------------',
- );
+ console.log('--------------------------------------------------');
 
  await ensureBackgroundReady();
  const channelId = await ensureChannel();
@@ -1050,9 +1037,11 @@ const processNotificationAction = async (
    break;
   case 'OPEN_MAP':
   case 'open-map':
-   console.log('[Notification] OPEN_MAP pressed → navigating to travel');
-   await requestAttendanceTravelNotificationNavigation();
-   await navigateToAttendanceTravelFromNotification();
+   console.log(
+    '[Notification] OPEN_MAP pressed → navigating to billable travel',
+   );
+   await requestBillableTravelNotificationNavigation();
+   await navigateToBillableTravelFromNotification();
    break;
   case 'IGNORE':
   case 'ignore':

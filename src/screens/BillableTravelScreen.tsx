@@ -2,8 +2,10 @@ import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import notifee from '@notifee/react-native';
 import {
  Platform,
+ NativeModules,
  StyleSheet,
  Text,
+ TextInput,
  TouchableOpacity,
  View,
  AppState,
@@ -12,7 +14,7 @@ import {
 import Feather from 'react-native-vector-icons/Feather';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
-import MapView, {Marker, PROVIDER_GOOGLE} from 'react-native-maps';
+import MapView, {Marker, Polyline, PROVIDER_GOOGLE} from 'react-native-maps';
 import {useNavigation} from '@react-navigation/native';
 import Geolocation from 'react-native-geolocation-service';
 import {check, PERMISSIONS, RESULTS, request} from 'react-native-permissions';
@@ -33,12 +35,138 @@ import {LatLng} from '../constants/workLocation';
 import {
  clearBillableTravelSession,
  persistBillableTravelSession,
+ readBillableTravelSession,
 } from '../services/billableTravelSessionStorage';
 
 const sleep = (time: number) =>
  new Promise<void>(resolve => setTimeout(resolve, time));
 
+const MIN_ROUTE_POINT_DISTANCE_METERS = 5;
+const DEFAULT_BILLABLE_PURPOSE = 'Client Meeting';
+const DEFAULT_ACTIVE_NOTES = 'Billable travel started';
+
+const textOrDefault = (
+ value: string | null | undefined,
+ defaultValue: string,
+) => {
+ const trimmedValue = typeof value === 'string' ? value.trim() : '';
+ return trimmedValue.length > 0 ? trimmedValue : defaultValue;
+};
+
+const extractResponseMessage = (response: unknown) => {
+ if (!response || typeof response !== 'object') {
+  return null;
+ }
+ const record = response as Record<string, unknown>;
+ return typeof record.message === 'string' && record.message.trim()
+  ? record.message.trim()
+  : null;
+};
+
+const BillableTrackingControl = NativeModules.BillableTrackingControl as
+ | {
+    startTaskRemovalWatcher?: () => Promise<void>;
+    stopTaskRemovalWatcher?: () => Promise<void>;
+    stopBillableServices?: () => Promise<void>;
+    consumeTaskRemovedFlag?: () => Promise<boolean>;
+   }
+ | undefined;
+
 let activeBackgroundRunId: string | null = null;
+
+const pad = (value: number) => String(value).padStart(2, '0');
+
+const formatApiDateTime = (date: Date) =>
+ `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+  date.getDate(),
+ )} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(
+  date.getSeconds(),
+ )}`;
+
+const calculateDurationMinutes = (startTime: string, endTime: string) => {
+ const start = new Date(startTime.replace(' ', 'T')).getTime();
+ const end = new Date(endTime.replace(' ', 'T')).getTime();
+ if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+  return 0;
+ }
+ return Math.max(0, Math.round((end - start) / 60000));
+};
+
+const calculateDistanceMeters = (from: LatLng, to: LatLng) => {
+ const toRad = (value: number) => (value * Math.PI) / 180;
+ const radiusMeters = 6371000;
+ const dLat = toRad(to.latitude - from.latitude);
+ const dLng = toRad(to.longitude - from.longitude);
+ const lat1 = toRad(from.latitude);
+ const lat2 = toRad(to.latitude);
+ const a =
+  Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+  Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+ return radiusMeters * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+
+const toDistanceKm = (meters: number) => Number((meters / 1000).toFixed(3));
+
+const extractTravelLogId = (response: unknown): number | null => {
+ const candidates: unknown[] = [];
+ const collect = (value: unknown) => {
+  if (!value || typeof value !== 'object') {
+   return;
+  }
+  const record = value as Record<string, unknown>;
+  candidates.push(record.travel_log_id, record.id);
+  collect(record.data);
+  collect(record.travel_log);
+ };
+ collect(response);
+ for (const candidate of candidates) {
+  const parsed = Number(candidate);
+  if (Number.isFinite(parsed) && parsed > 0) {
+   return parsed;
+  }
+ }
+ return null;
+};
+
+const buildBillablePayload = ({
+ projectId,
+ startCoords,
+ endCoords,
+ distanceMeters,
+ startTime,
+ endTime,
+ purpose,
+ notes,
+ status,
+ travelLogId,
+}: {
+ projectId: string | number;
+ startCoords: LatLng;
+ endCoords: LatLng;
+ distanceMeters: number;
+ startTime: string;
+ endTime: string;
+ purpose: string;
+ notes: string;
+ status: 'active' | 'complete';
+ travelLogId?: number | null;
+}) => ({
+ project_id: Number(projectId),
+ start_lat: startCoords.latitude,
+ start_lng: startCoords.longitude,
+ end_lat: endCoords.latitude,
+ end_lng: endCoords.longitude,
+ distance: toDistanceKm(distanceMeters),
+ duration: calculateDurationMinutes(startTime, endTime),
+ start_time: startTime,
+ end_time: endTime,
+ mode: 'car',
+ purpose,
+ notes,
+ is_billable: 1 as const,
+ billable_status: status,
+ ...(travelLogId ? {travel_log_id: travelLogId} : {}),
+});
 
 const backgroundTaskOptions = {
  taskName: 'BillableTravel',
@@ -68,8 +196,32 @@ const backgroundTrackingTask = async (taskData?: {
  projectId?: string;
  delay?: number;
  runId?: string;
+ startLat?: number;
+ startLng?: number;
+ startTime?: string;
+ travelLogId?: number;
+ purpose?: string;
+ notes?: string;
 }) => {
- const {token, projectId, delay = 10000, runId} = taskData || {};
+ const {
+  token,
+  projectId,
+  delay = 10000,
+  runId,
+  startLat,
+  startLng,
+  startTime,
+  travelLogId: initialTravelLogId,
+  purpose = DEFAULT_BILLABLE_PURPOSE,
+  notes = DEFAULT_ACTIVE_NOTES,
+ } = taskData || {};
+ const startCoords =
+  typeof startLat === 'number' && typeof startLng === 'number'
+   ? {latitude: startLat, longitude: startLng}
+   : null;
+ let travelLogId = initialTravelLogId;
+ let lastCoords = startCoords;
+ let totalDistanceMeters = 0;
 
  while (
   BackgroundJob.isRunning() &&
@@ -88,12 +240,44 @@ const backgroundTrackingTask = async (taskData?: {
    );
 
    const {latitude, longitude} = position.coords;
-   if (projectId && token) {
+   const coords = {latitude, longitude};
+   if (lastCoords) {
+    const delta = calculateDistanceMeters(lastCoords, coords);
+    if (delta >= MIN_ROUTE_POINT_DISTANCE_METERS) {
+     totalDistanceMeters += delta;
+     lastCoords = coords;
+    }
+   } else {
+    lastCoords = coords;
+   }
+
+   if (projectId && token && startCoords && startTime) {
     console.log(`[BG Task] Sending coordinates: ${latitude}, ${longitude}`);
-    await updateBillableLocationAPI(
-     {project_id: Number(projectId), latitude, longitude},
+    const response = await updateBillableLocationAPI(
+     buildBillablePayload({
+      projectId,
+      startCoords,
+      endCoords: coords,
+      distanceMeters: totalDistanceMeters,
+      startTime,
+      endTime: formatApiDateTime(new Date()),
+      purpose,
+      notes,
+      status: 'active',
+      travelLogId,
+     }),
      token,
     );
+    travelLogId = travelLogId ?? extractTravelLogId(response) ?? undefined;
+    await persistBillableTravelSession(String(projectId), {
+     startLat: startCoords.latitude,
+     startLng: startCoords.longitude,
+     startTime,
+     travelLogId,
+     distanceMeters: totalDistanceMeters,
+     purpose,
+     notes,
+    }).catch(() => null);
    }
   } catch (err) {
    console.error('[BG Task] Tracking Error:', err);
@@ -121,6 +305,10 @@ export default function BillableTravelScreen() {
  const [projectPickerVisible, setProjectPickerVisible] = useState(false);
  const [isMapModalVisible, setIsMapModalVisible] = useState(false);
  const [isSubmitting, setIsSubmitting] = useState(false);
+ const [startPurpose, setStartPurpose] = useState('');
+ const [startNotes, setStartNotes] = useState('');
+ const [routeCoords, setRouteCoords] = useState<LatLng[]>([]);
+ const [distanceMeters, setDistanceMeters] = useState(0);
  const [selectedPoint, setSelectedPoint] = useState<{
   title: string;
   address: string;
@@ -128,6 +316,7 @@ export default function BillableTravelScreen() {
 
  const watchId = useRef<number | null>(null);
  const mapRef = useRef<MapView>(null);
+ const fullMapRef = useRef<MapView>(null);
  const isMounted = useRef(true);
  const isStartingRef = useRef(false);
  const isStoppingRef = useRef(false);
@@ -137,6 +326,14 @@ export default function BillableTravelScreen() {
  const authTokenRef = useRef(authToken);
  const isTrackingRef = useRef(isTracking);
  const currentCoordsRef = useRef<LatLng | null>(null);
+ const routeCoordsRef = useRef<LatLng[]>([]);
+ const distanceMetersRef = useRef(0);
+ const startCoordsRef = useRef<LatLng | null>(null);
+ const startTimeRef = useRef<string | null>(null);
+ const travelLogIdRef = useRef<number | null>(null);
+ const lastSessionPersistAtRef = useRef(0);
+ const startPurposeRef = useRef(startPurpose);
+ const startNotesRef = useRef(startNotes);
 
  // Keep the ref in sync with Redux state without re-running heavy effects
  useEffect(() => {
@@ -155,6 +352,75 @@ export default function BillableTravelScreen() {
   currentCoordsRef.current = currentCoords;
  }, [currentCoords]);
 
+ useEffect(() => {
+  routeCoordsRef.current = routeCoords;
+ }, [routeCoords]);
+
+ useEffect(() => {
+  distanceMetersRef.current = distanceMeters;
+ }, [distanceMeters]);
+
+ useEffect(() => {
+  startPurposeRef.current = startPurpose;
+ }, [startPurpose]);
+
+ useEffect(() => {
+  startNotesRef.current = startNotes;
+ }, [startNotes]);
+
+ const resetTravelState = useCallback(() => {
+  startCoordsRef.current = null;
+  startTimeRef.current = null;
+  travelLogIdRef.current = null;
+  distanceMetersRef.current = 0;
+  routeCoordsRef.current = [];
+  lastSessionPersistAtRef.current = 0;
+  if (isMounted.current) {
+   setDistanceMeters(0);
+   setRouteCoords([]);
+  }
+ }, []);
+
+ const appendRoutePoint = useCallback((coords: LatLng) => {
+  const previous = routeCoordsRef.current[routeCoordsRef.current.length - 1];
+  if (previous) {
+   const delta = calculateDistanceMeters(previous, coords);
+   if (delta < MIN_ROUTE_POINT_DISTANCE_METERS) {
+    return;
+   }
+   distanceMetersRef.current += delta;
+   if (isMounted.current) {
+    setDistanceMeters(distanceMetersRef.current);
+   }
+  }
+
+  routeCoordsRef.current = [...routeCoordsRef.current, coords];
+  if (isMounted.current) {
+   setRouteCoords(routeCoordsRef.current);
+  }
+  const now = Date.now();
+  const projectId = selectedProjectIdRef.current;
+  const startCoords = startCoordsRef.current;
+  if (
+   isTrackingRef.current &&
+   projectId &&
+   startCoords &&
+   startTimeRef.current &&
+   now - lastSessionPersistAtRef.current > 15000
+  ) {
+   lastSessionPersistAtRef.current = now;
+   persistBillableTravelSession(String(projectId), {
+    startLat: startCoords.latitude,
+    startLng: startCoords.longitude,
+    startTime: startTimeRef.current,
+    travelLogId: travelLogIdRef.current ?? undefined,
+    distanceMeters: distanceMetersRef.current,
+    purpose: startPurposeRef.current || DEFAULT_BILLABLE_PURPOSE,
+    notes: startNotesRef.current || DEFAULT_ACTIVE_NOTES,
+   }).catch(() => null);
+  }
+ }, []);
+
  const stopLocationWatch = useCallback(() => {
   if (watchId.current !== null) {
    Geolocation.clearWatch(watchId.current);
@@ -168,7 +434,8 @@ export default function BillableTravelScreen() {
   if (BackgroundJob.isRunning()) {
    await BackgroundJob.stop().catch(() => null);
   }
-  await notifee.stopForegroundService().catch(() => null);
+  await BillableTrackingControl?.stopBillableServices?.().catch(() => null);
+  await BillableTrackingControl?.stopTaskRemovalWatcher?.().catch(() => null);
   await notifee.cancelNotification('billable-tracking').catch(() => null);
  }, []);
 
@@ -183,20 +450,160 @@ export default function BillableTravelScreen() {
   [stopBackgroundServices, stopLocationWatch],
  );
 
- const stopTracking = useCallback(async () => {
-  if (isStoppingRef.current) {
-   return;
-  }
-  isStoppingRef.current = true;
-  try {
-   await cleanupTracking();
+ const stopTracking = useCallback(
+  async ({
+   purpose,
+   notes,
+   submitFinalUpdate = true,
+  }: {
+   purpose?: string | null;
+   notes?: string | null;
+   submitFinalUpdate?: boolean;
+  } = {}) => {
+   if (isStoppingRef.current) {
+    return;
+   }
+   isStoppingRef.current = true;
+   if (isMounted.current) {
+    setIsSubmitting(true);
+   }
+   try {
+    const projectId = selectedProjectIdRef.current;
+    const startCoords = startCoordsRef.current;
+    const endCoords = currentCoordsRef.current ?? startCoords;
+    const startTime = startTimeRef.current;
+    const endTime = formatApiDateTime(new Date());
+    const finalPurpose = textOrDefault(purpose, DEFAULT_BILLABLE_PURPOSE);
+    const finalNotes = textOrDefault(notes, DEFAULT_ACTIVE_NOTES);
+    let responseMessage: string | null = null;
+
+    if (
+     submitFinalUpdate &&
+     projectId &&
+     startCoords &&
+     endCoords &&
+     startTime &&
+     authTokenRef.current
+    ) {
+     const response = await updateBillableLocationAPI(
+      buildBillablePayload({
+       projectId,
+       startCoords,
+       endCoords,
+       distanceMeters: distanceMetersRef.current,
+       startTime,
+       endTime,
+       purpose: finalPurpose,
+       notes: finalNotes,
+       status: 'complete',
+       travelLogId: travelLogIdRef.current,
+      }),
+      authTokenRef.current,
+     );
+     travelLogIdRef.current =
+      travelLogIdRef.current ?? extractTravelLogId(response);
+     responseMessage = extractResponseMessage(response);
+    }
+
+    await cleanupTracking();
+    resetTravelState();
+    if (isMounted.current) {
+     setIsTracking(false);
+     setStartPurpose('');
+     setStartNotes('');
+     if (submitFinalUpdate) {
+      showDialog({
+       title: 'Travel Saved',
+       message: responseMessage || 'Billable travel saved successfully.',
+       variant: 'success',
+       primaryAction: {label: 'Okay'},
+      });
+     }
+    }
+   } catch (error: any) {
+    if (isMounted.current) {
+     showDialog({
+      title: 'Stop Failed',
+      message:
+       error?.message ||
+       'Unable to submit the final billable travel update. Please try again.',
+      variant: 'error',
+      primaryAction: {label: 'Okay'},
+     });
+    }
+   } finally {
+    isStoppingRef.current = false;
+    if (isMounted.current) {
+     setIsSubmitting(false);
+    }
+   }
+  },
+  [cleanupTracking, resetTravelState, showDialog],
+ );
+
+ const requestStopTracking = useCallback(() => {
+  stopTracking({
+   purpose: startPurposeRef.current,
+   notes: startNotesRef.current,
+  }).catch(error => console.warn('[BillableTravel] Stop failed', error));
+ }, [stopTracking]);
+
+ const syncTrackingState = useCallback(async () => {
+  const wasTaskRemoved =
+   (await BillableTrackingControl?.consumeTaskRemovedFlag?.().catch(
+    () => false,
+   )) ?? false;
+
+  if (wasTaskRemoved) {
+   await clearBillableTravelSession();
+   isTrackingRef.current = false;
    if (isMounted.current) {
     setIsTracking(false);
    }
-  } finally {
-   isStoppingRef.current = false;
+   return;
   }
- }, [cleanupTracking]);
+
+  const session = await readBillableTravelSession();
+  const isBgRunning = BackgroundJob.isRunning();
+
+  if (isBgRunning || session?.active) {
+   if (session) {
+    selectedProjectIdRef.current = session.projectId;
+    if (
+     typeof session.startLat === 'number' &&
+     typeof session.startLng === 'number'
+    ) {
+     startCoordsRef.current = {
+      latitude: session.startLat,
+      longitude: session.startLng,
+     };
+    }
+    startTimeRef.current = session.startTime ?? startTimeRef.current;
+    travelLogIdRef.current = session.travelLogId ?? travelLogIdRef.current;
+    distanceMetersRef.current =
+     typeof session.distanceMeters === 'number'
+      ? session.distanceMeters
+      : distanceMetersRef.current;
+    isTrackingRef.current = true;
+    if (isMounted.current) {
+     dispatch(setSelectedProject(session.projectId));
+     setStartPurpose(session.purpose || '');
+     setStartNotes(session.notes || '');
+     if (startCoordsRef.current && !currentCoordsRef.current) {
+      setCurrentCoords(startCoordsRef.current);
+      setRouteCoords([startCoordsRef.current]);
+     }
+     setDistanceMeters(distanceMetersRef.current);
+     setIsTracking(true);
+    }
+   } else if (isBgRunning) {
+    isTrackingRef.current = true;
+    if (isMounted.current) {
+     setIsTracking(true);
+    }
+   }
+  }
+ }, [dispatch]);
 
  // AppState listener — registered ONCE on mount, never re-subscribed.
  // Registering inside an effect that depends on [isTracking] caused a new
@@ -214,6 +621,9 @@ export default function BillableTravelScreen() {
      console.log('[BillableTravel] App moved to background');
     } else if (nextAppState === 'active' && prev !== 'active') {
      console.log('[BillableTravel] App returned to foreground');
+     syncTrackingState().catch(error =>
+      console.warn('[BillableTravel] Tracking state sync failed', error),
+     );
      const coords = currentCoordsRef.current;
      if (isTrackingRef.current && coords && mapRef.current) {
       requestAnimationFrame(() => {
@@ -235,11 +645,20 @@ export default function BillableTravelScreen() {
   return () => {
    isMounted.current = false;
    appStateSubscription.remove();
-   cleanupTracking().catch(error =>
-    console.warn('[BillableTravel] Cleanup on unmount failed', error),
-   );
+   stopLocationWatch();
+   if (appStateRef.current === 'active') {
+    cleanupTracking().catch(error =>
+     console.warn('[BillableTravel] Cleanup on unmount failed', error),
+    );
+   }
   };
- }, [cleanupTracking]);
+ }, [cleanupTracking, stopLocationWatch, syncTrackingState]);
+
+ useEffect(() => {
+  syncTrackingState().catch(error =>
+   console.warn('[BillableTravel] Initial tracking state sync failed', error),
+  );
+ }, [syncTrackingState]);
 
  useEffect(() => {
   if (projects.length === 0) {
@@ -318,6 +737,7 @@ export default function BillableTravelScreen() {
   isStartingRef.current = true;
   try {
    await cleanupTracking({clearSession: false});
+   resetTravelState();
 
    // Get initial position
    const position = await new Promise<Geolocation.GeoPosition>(
@@ -335,21 +755,62 @@ export default function BillableTravelScreen() {
     longitude: position.coords.longitude,
    };
    setCurrentCoords(coords);
+   appendRoutePoint(coords);
+   startCoordsRef.current = coords;
+   const startTime = formatApiDateTime(new Date());
+   startTimeRef.current = startTime;
+
+   console.log(
+    `[BillableTravel] Submitting initial API log with Purpose: "${
+     startPurpose.trim() || DEFAULT_BILLABLE_PURPOSE
+    }" | Notes: "${startNotes.trim() || DEFAULT_ACTIVE_NOTES}"`,
+   );
+
+   const initialResponse = await updateBillableLocationAPI(
+    buildBillablePayload({
+     projectId: projectIdForSession,
+     startCoords: coords,
+     endCoords: coords,
+     distanceMeters: 0,
+     startTime,
+     endTime: startTime,
+     purpose: startPurpose.trim() || DEFAULT_BILLABLE_PURPOSE,
+     notes: startNotes.trim() || DEFAULT_ACTIVE_NOTES,
+     status: 'active',
+    }),
+    authTokenRef.current,
+   );
+   travelLogIdRef.current = extractTravelLogId(initialResponse);
 
    // Start BackgroundJob to keep the app alive (creates a foreground service on Android)
    const runId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
    activeBackgroundRunId = runId;
-   if (!BackgroundJob.isRunning()) {
-    await BackgroundJob.start(backgroundTrackingTask, {
-     ...backgroundTaskOptions,
-     parameters: {
-      token: authTokenRef.current ?? undefined,
-      projectId: String(projectIdForSession),
-      delay: 5000,
-      runId,
-     },
-    });
+
+   console.log(
+    `[BillableTravel] Starting background job with Purpose: "${
+     startPurpose.trim() || DEFAULT_BILLABLE_PURPOSE
+    }" | Notes: "${startNotes.trim() || DEFAULT_ACTIVE_NOTES}"`,
+   );
+
+   if (BackgroundJob.isRunning()) {
+    await BackgroundJob.stop().catch(() => null);
    }
+   await BackgroundJob.start(backgroundTrackingTask, {
+    ...backgroundTaskOptions,
+    parameters: {
+     token: authTokenRef.current ?? undefined,
+     projectId: String(projectIdForSession),
+     delay: 5000,
+     runId,
+     startLat: coords.latitude,
+     startLng: coords.longitude,
+     startTime,
+     travelLogId: travelLogIdRef.current ?? undefined,
+     purpose: startPurpose.trim() || DEFAULT_BILLABLE_PURPOSE,
+     notes: startNotes.trim() || DEFAULT_ACTIVE_NOTES,
+    },
+   });
+   await BillableTrackingControl?.startTaskRemovalWatcher?.().catch(() => null);
 
    // Start continuous location watching
    stopLocationWatch();
@@ -366,6 +827,26 @@ export default function BillableTravelScreen() {
      );
 
      setCurrentCoords({latitude: lat, longitude: lng});
+     const nextCoords = {latitude: lat, longitude: lng};
+     appendRoutePoint(nextCoords);
+     mapRef.current?.animateToRegion(
+      {
+       latitude: lat,
+       longitude: lng,
+       latitudeDelta: 0.01,
+       longitudeDelta: 0.01,
+      },
+      600,
+     );
+     fullMapRef.current?.animateToRegion(
+      {
+       latitude: lat,
+       longitude: lng,
+       latitudeDelta: 0.02,
+       longitudeDelta: 0.02,
+      },
+      600,
+     );
     },
     error => {
      console.error('[Geolocation] Watch Error:', error);
@@ -383,7 +864,15 @@ export default function BillableTravelScreen() {
 
    if (isMounted.current) {
     setIsTracking(true);
-    persistBillableTravelSession(String(projectIdForSession)).catch(() => null);
+    persistBillableTravelSession(String(projectIdForSession), {
+     startLat: coords.latitude,
+     startLng: coords.longitude,
+     startTime,
+     travelLogId: travelLogIdRef.current ?? undefined,
+     distanceMeters: 0,
+     purpose: startPurpose.trim() || DEFAULT_BILLABLE_PURPOSE,
+     notes: startNotes.trim() || DEFAULT_ACTIVE_NOTES,
+    }).catch(() => null);
    }
 
    // FIXED: Show an interactive Notifee notification with a 'Stop' button
@@ -394,7 +883,6 @@ export default function BillableTravelScreen() {
     android: {
      channelId: 'maxxstation-alerts',
      smallIcon: 'ic_launcher',
-     asForegroundService: true,
      ongoing: true,
      pressAction: {id: 'default'},
      actions: [
@@ -407,6 +895,7 @@ export default function BillableTravelScreen() {
    });
   } catch (error: any) {
    await cleanupTracking();
+   resetTravelState();
    if (isMounted.current) {
     showDialog({
      title: 'Start Failed',
@@ -433,7 +922,9 @@ export default function BillableTravelScreen() {
     colors={theme.gradients.screen}
     style={StyleSheet.absoluteFill}
    />
-   <TopHeader title="Billable Travel" />
+   <View style={{padding: 14}}>
+    <TopHeader title="Billable Travel" />
+   </View>
 
    <View style={styles.container}>
     <AnimatedCard style={styles.projectCard} delay={100}>
@@ -455,6 +946,58 @@ export default function BillableTravelScreen() {
      </TouchableOpacity>
     </AnimatedCard>
 
+    {!isTracking ? (
+     <AnimatedCard style={styles.optionalCard} delay={150}>
+      <View style={styles.optionalHeader}>
+       <Feather name="edit-3" size={14} color={theme.colors.primary} />
+       <Text style={styles.optionalTitle}>Travel Details</Text>
+      </View>
+      <View style={styles.optionalInputContainer}>
+       <View style={[styles.inputGroup, {marginRight: 8, flex: 1}]}>
+        <Text style={styles.inputLabel}>Purpose</Text>
+        <TextInput
+         value={startPurpose}
+         onChangeText={setStartPurpose}
+         placeholder="Client Meeting"
+         placeholderTextColor={theme.colors.muted}
+         style={styles.optionalInput}
+        />
+       </View>
+       <View style={[styles.inputGroup, {flex: 1.2}]}>
+        <Text style={styles.inputLabel}>Notes</Text>
+        <TextInput
+         value={startNotes}
+         onChangeText={setStartNotes}
+         placeholder="Billable travel started"
+         placeholderTextColor={theme.colors.muted}
+         style={styles.optionalInput}
+        />
+       </View>
+      </View>
+     </AnimatedCard>
+    ) : (
+     <AnimatedCard style={styles.trackingDetailsCard} delay={150}>
+      <View style={styles.trackingDetailRow}>
+       <Feather name="tag" size={14} color={theme.colors.primary} />
+       <View style={styles.trackingDetailTextGroup}>
+        <Text style={styles.trackingDetailLabel}>Purpose</Text>
+        <Text style={styles.trackingDetailValue}>
+         {startPurpose || DEFAULT_BILLABLE_PURPOSE}
+        </Text>
+       </View>
+      </View>
+      <View style={[styles.trackingDetailRow, {marginTop: 10}]}>
+       <Feather name="file-text" size={14} color={theme.colors.primary} />
+       <View style={styles.trackingDetailTextGroup}>
+        <Text style={styles.trackingDetailLabel}>Notes</Text>
+        <Text style={styles.trackingDetailValue}>
+         {startNotes || DEFAULT_ACTIVE_NOTES}
+        </Text>
+       </View>
+      </View>
+     </AnimatedCard>
+    )}
+
     <View style={styles.mapContainer}>
      <MapView
       ref={mapRef}
@@ -468,6 +1011,26 @@ export default function BillableTravelScreen() {
       }}
       showsUserLocation
       showsMyLocationButton={false}>
+      {routeCoords.length > 1 && (
+       <Polyline
+        coordinates={routeCoords}
+        strokeColor={theme.colors.primary}
+        strokeWidth={4}
+        lineJoin="round"
+        lineCap="round"
+       />
+      )}
+      {routeCoords[0] && (
+       <Marker coordinate={routeCoords[0]} anchor={{x: 0.5, y: 0.5}}>
+        <View style={styles.markerWrapper}>
+         <View style={[styles.customPin, {backgroundColor: '#10B981'}]}>
+          <Feather name="map-pin" size={12} color="#FFF" />
+         </View>
+         <View style={[styles.pinTail, {borderTopColor: '#10B981'}]} />
+         <Text style={[styles.markerLabel, {color: '#10B981'}]}>START</Text>
+        </View>
+       </Marker>
+      )}
       {currentCoords && (
        <Marker
         coordinate={currentCoords}
@@ -556,8 +1119,8 @@ export default function BillableTravelScreen() {
      <ActionButton
       label={isTracking ? 'Stop Billable' : 'Start Billable'}
       icon={isTracking ? 'stop-circle' : 'play-circle'}
-      onPress={isTracking ? stopTracking : startTracking}
-      variant={isTracking ? 'secondary' : 'primary'}
+      onPress={isTracking ? requestStopTracking : startTracking}
+      variant="primary"
       // @ts-ignore
       loading={isSubmitting}
       style={styles.mainBtn}
@@ -583,6 +1146,7 @@ export default function BillableTravelScreen() {
     <View style={styles.modalOverlay}>
      <View style={styles.modalContent}>
       <MapView
+       ref={fullMapRef}
        provider={PROVIDER_GOOGLE}
        style={styles.fullScreenMap}
        showsUserLocation
@@ -593,6 +1157,18 @@ export default function BillableTravelScreen() {
         latitudeDelta: 0.02,
         longitudeDelta: 0.02,
        }}>
+       {routeCoords.length > 1 && (
+        <Polyline
+         coordinates={routeCoords}
+         strokeColor={theme.colors.primary}
+         strokeWidth={4}
+         lineJoin="round"
+         lineCap="round"
+        />
+       )}
+       {routeCoords[0] && (
+        <Marker coordinate={routeCoords[0]} title="Starting Point" />
+       )}
        {currentCoords && (
         <Marker
          coordinate={currentCoords}
@@ -907,5 +1483,82 @@ const createStyles = (theme: AppTheme) =>
    color: '#FFF',
    textTransform: 'uppercase',
    letterSpacing: 0.5,
+  },
+  optionalCard: {
+   padding: 12,
+   marginBottom: 12,
+   borderRadius: 20,
+   backgroundColor: theme.colors.card,
+   borderWidth: 1,
+   borderColor: theme.colors.border,
+  },
+  optionalHeader: {
+   flexDirection: 'row',
+   alignItems: 'center',
+   gap: 6,
+   marginBottom: 10,
+  },
+  optionalTitle: {
+   fontSize: 12,
+   fontWeight: '800',
+   color: theme.colors.text,
+   letterSpacing: 0.5,
+  },
+  optionalInputContainer: {
+   flexDirection: 'row',
+   alignItems: 'center',
+  },
+  inputGroup: {
+   flexDirection: 'column',
+  },
+  inputLabel: {
+   fontSize: 10,
+   fontWeight: '700',
+   color: theme.colors.muted,
+   textTransform: 'uppercase',
+   marginBottom: 4,
+   letterSpacing: 0.5,
+  },
+  optionalInput: {
+   height: 40,
+   borderRadius: 10,
+   borderWidth: 1,
+   borderColor: theme.colors.border,
+   backgroundColor: theme.isDark
+    ? 'rgba(255,255,255,0.03)'
+    : 'rgba(0,0,0,0.01)',
+   color: theme.colors.text,
+   paddingHorizontal: 10,
+   fontSize: 13,
+   fontWeight: '600',
+  },
+  trackingDetailsCard: {
+   padding: 12,
+   marginBottom: 12,
+   borderRadius: 20,
+   backgroundColor: theme.colors.card,
+   borderWidth: 1,
+   borderColor: theme.colors.border,
+  },
+  trackingDetailRow: {
+   flexDirection: 'row',
+   alignItems: 'center',
+   gap: 10,
+  },
+  trackingDetailTextGroup: {
+   flexDirection: 'column',
+  },
+  trackingDetailLabel: {
+   fontSize: 9,
+   fontWeight: '800',
+   color: theme.colors.muted,
+   textTransform: 'uppercase',
+   letterSpacing: 0.5,
+  },
+  trackingDetailValue: {
+   fontSize: 13,
+   fontWeight: '700',
+   color: theme.colors.text,
+   marginTop: 1,
   },
  });

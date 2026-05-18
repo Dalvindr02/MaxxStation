@@ -147,10 +147,34 @@ export const ExpenseListScreen = () => {
          <Feather name="credit-card" size={16} color={theme.colors.primary} />
         </View>
         <View style={styles.expenseInfo}>
-         <Text allowFontScaling={false} style={styles.expenseAmount}>
-          ${entry.amount || '0'}
-         </Text>
-         <Text allowFontScaling={false} style={styles.expenseMeta}>
+         <View style={styles.expenseAmountRow}>
+          <Text allowFontScaling={false} style={styles.expenseAmount}>
+           ${entry.amount || '0'}
+          </Text>
+          {entry.status === 'pending' || entry.hasReceipt || entry.receipt ? (
+           <View
+            style={[
+             styles.receiptBadge,
+             entry.status === 'pending' && {
+              backgroundColor: 'rgba(255,216,107,0.16)',
+             },
+            ]}>
+            <Text
+             allowFontScaling={false}
+             style={[
+              styles.receiptBadgeText,
+              entry.status === 'pending' && {color: theme.colors.warning},
+             ]}>
+             {entry.status === 'pending' ? 'Pending' : 'Receipt'}
+            </Text>
+           </View>
+          ) : null}
+         </View>
+         <Text
+          allowFontScaling={false}
+          style={styles.expenseMeta}
+          numberOfLines={1}
+          ellipsizeMode="tail">
           {entry.category_name || entry.category} • {entry.date}
          </Text>
          {entry.notes ? (
@@ -162,24 +186,6 @@ export const ExpenseListScreen = () => {
           </Text>
          ) : null}
         </View>
-        {entry.status === 'pending' || entry.hasReceipt || entry.receipt ? (
-         <View
-          style={[
-           styles.receiptBadge,
-           entry.status === 'pending' && {
-            backgroundColor: 'rgba(255,216,107,0.16)',
-           },
-          ]}>
-          <Text
-           allowFontScaling={false}
-           style={[
-            styles.receiptBadgeText,
-            entry.status === 'pending' && {color: theme.colors.warning},
-           ]}>
-           {entry.status === 'pending' ? 'Pending' : 'Receipt'}
-          </Text>
-         </View>
-        ) : null}
        </TouchableOpacity>
        <TouchableOpacity
         onPress={() => handleEditExpense(entry)}
@@ -237,9 +243,9 @@ const createStyles = (theme: AppTheme) => {
   },
   expenseRow: {
    flexDirection: 'row',
-   alignItems: 'flex-start',
+   alignItems: 'center',
    paddingVertical: 14,
-   paddingHorizontal: 14,
+   paddingHorizontal: 12,
    borderWidth: 1,
    borderColor: borderColor,
    borderRadius: 18,
@@ -251,7 +257,8 @@ const createStyles = (theme: AppTheme) => {
    flex: 1,
    flexDirection: 'row',
    alignItems: 'flex-start',
-   gap: 12,
+   gap: 10,
+   minWidth: 0,
   },
   expenseIcon: {
    width: 40,
@@ -263,16 +270,26 @@ const createStyles = (theme: AppTheme) => {
   },
   expenseInfo: {
    flex: 1,
+   minWidth: 0,
+   paddingRight: 4,
+  },
+  expenseAmountRow: {
+   flexDirection: 'row',
+   alignItems: 'center',
+   gap: 8,
+   minWidth: 0,
   },
   expenseAmount: {
    color: theme.colors.text,
    fontSize: 16,
    fontWeight: '700',
+   flexShrink: 1,
   },
   expenseMeta: {
    color: muted,
    fontSize: 12,
    marginTop: 2,
+   flexShrink: 1,
   },
   expenseNotes: {
    marginTop: 4,
@@ -282,14 +299,17 @@ const createStyles = (theme: AppTheme) => {
   receiptBadge: {
    alignSelf: 'flex-start',
    borderRadius: 999,
-   paddingHorizontal: 10,
+   paddingHorizontal: 9,
    paddingVertical: 4,
    backgroundColor: theme.colors.blueSoft,
+   flexShrink: 0,
+   maxWidth: 76,
   },
   receiptBadgeText: {
    color: theme.colors.primary,
    fontSize: 11,
    fontWeight: '700',
+   textAlign: 'center',
   },
   deleteButton: {
    width: 32,

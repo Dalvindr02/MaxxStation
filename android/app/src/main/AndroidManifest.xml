@@ -83,12 +83,10 @@
         android:exported="false"
         android:stopWithTask="true"
         tools:node="merge" />
-
-      <!-- notifee: required for interactive foreground service notifications with buttons -->
       <service
-        android:name="app.notifee.core.ForegroundService"
-        android:foregroundServiceType="location"
-        android:stopWithTask="true" />
+        android:name=".BillableTaskRemovalService"
+        android:exported="false" />
+
     </application>
     
 </manifest>
