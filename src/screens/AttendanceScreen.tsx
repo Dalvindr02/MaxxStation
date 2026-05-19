@@ -10,6 +10,7 @@ import {
  TouchableOpacity,
  View,
  Linking,
+ Animated,
 } from 'react-native';
 import Feather from 'react-native-vector-icons/Feather';
 import {SafeAreaView} from 'react-native-safe-area-context';
@@ -25,7 +26,6 @@ import {check, PERMISSIONS, RESULTS, request} from 'react-native-permissions';
 import MapView, {Marker, PROVIDER_GOOGLE} from 'react-native-maps';
 import {LatLng, WorkLocation, WORK_LOCATION} from '../constants/workLocation';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
-import {reverseGeocodeCoords} from '../services/googleMapsService';
 import {useDialog} from '../context/DialogContext';
 import {useAttendance} from '../context/AttendanceContext';
 import NetInfo from '@react-native-community/netinfo';
@@ -94,10 +94,10 @@ const buildLocationVisual = (
    return {
     icon: 'check-circle',
     message: 'Location verified',
-    detail: 'Backend confirmed this location for attendance.',
+    detail: 'MaxxStations confirmed this location for attendance.',
     backgroundColor: 'rgba(34,197,94,0.2)',
     borderColor: 'rgba(34,197,94,0.5)',
-    textColor: 'green',
+    textColor: '#5DFFA9',
    };
   case 'outside':
    return {
@@ -106,7 +106,7 @@ const buildLocationVisual = (
     detail: 'Your location appears to be outside the office premises.',
     backgroundColor: 'rgba(252,165,165,0.18)',
     borderColor: 'rgba(248,113,113,0.45)',
-    textColor: 'red',
+    textColor: '#FF7A90',
    };
   case 'denied':
    return {
@@ -124,22 +124,143 @@ const buildLocationVisual = (
     detail: locationError || 'Please try refreshing your GPS lock',
     backgroundColor: 'rgba(248,113,113,0.2)',
     borderColor: 'rgba(248,113,113,0.45)',
-    textColor: 'red',
+    textColor: '#FF7A90',
    };
   default:
    return {
     icon: 'loader',
     message: 'Locking onto your location…',
-    detail: 'The MaxxStations will verify the submitted coordinates.',
+    detail: 'MaxxStations will verify the submitted coordinates.',
     backgroundColor: 'rgba(59,130,246,0.2)',
     borderColor: 'rgba(59,130,246,0.45)',
-    textColor: 'blue',
+    textColor: '#45CAFF',
    };
  }
 };
 
+function useSmoothCoordinate(targetCoords: LatLng | null) {
+ const [coords, setCoords] = useState<LatLng | null>(targetCoords);
+ const prevCoordsRef = useRef<LatLng | null>(targetCoords);
+
+ useEffect(() => {
+  if (!targetCoords) {
+   setCoords(null);
+   prevCoordsRef.current = null;
+   return;
+  }
+
+  if (!prevCoordsRef.current) {
+   setCoords(targetCoords);
+   prevCoordsRef.current = targetCoords;
+   return;
+  }
+
+  const startLat = prevCoordsRef.current.latitude;
+  const startLng = prevCoordsRef.current.longitude;
+  const endLat = targetCoords.latitude;
+  const endLng = targetCoords.longitude;
+
+  const diff = Math.abs(endLat - startLat) + Math.abs(endLng - startLng);
+  if (diff < 0.00001 || diff > 0.08) {
+   setCoords(targetCoords);
+   prevCoordsRef.current = targetCoords;
+   return;
+  }
+
+  const startTime = Date.now();
+  const duration = 1200; // Smooth 1.2s glide
+
+  let animId: number;
+  const animate = () => {
+   const elapsed = Date.now() - startTime;
+   const progress = Math.min(elapsed / duration, 1);
+   const ease = progress * (2 - progress); // easeOutQuad
+
+   const currentLat = startLat + (endLat - startLat) * ease;
+   const currentLng = startLng + (endLng - startLng) * ease;
+
+   setCoords({latitude: currentLat, longitude: currentLng});
+
+   if (progress < 1) {
+    animId = requestAnimationFrame(animate);
+   } else {
+    prevCoordsRef.current = targetCoords;
+   }
+  };
+
+  animId = requestAnimationFrame(animate);
+
+  return () => {
+   cancelAnimationFrame(animId);
+  };
+ }, [targetCoords]);
+
+ return coords;
+}
+
 export default function AttendanceScreen() {
  const {markPresence, todayEntry} = useAttendance();
+ const mapRef = useRef<MapView>(null);
+ const fullMapRef = useRef<MapView>(null);
+
+ const pulseAnim = useRef(new Animated.Value(0)).current;
+ const officePulse = useRef(new Animated.Value(0)).current;
+ const locationPanelAnim = useRef(new Animated.Value(0)).current;
+ const addressContentAnim = useRef(new Animated.Value(1)).current;
+
+ const [selectedMarker, setSelectedMarker] = useState<{
+  type: 'user' | 'office';
+  address: string;
+  coords: LatLng;
+ } | null>(null);
+
+ const detailCardAnim = useRef(new Animated.Value(0)).current;
+
+ useEffect(() => {
+  Animated.loop(
+   Animated.sequence([
+    Animated.timing(pulseAnim, {
+     toValue: 1,
+     duration: 2000,
+     useNativeDriver: true,
+    }),
+   ]),
+  ).start();
+ }, [pulseAnim]);
+
+ useEffect(() => {
+  Animated.loop(
+   Animated.sequence([
+    Animated.timing(officePulse, {
+     toValue: 1,
+     duration: 3000,
+     useNativeDriver: true,
+    }),
+    Animated.timing(officePulse, {
+     toValue: 0,
+     duration: 3000,
+     useNativeDriver: true,
+    }),
+   ]),
+  ).start();
+ }, [officePulse]);
+
+ useEffect(() => {
+  if (selectedMarker) {
+   Animated.spring(detailCardAnim, {
+    toValue: 1,
+    tension: 50,
+    friction: 8,
+    useNativeDriver: true,
+   }).start();
+  } else {
+   Animated.timing(detailCardAnim, {
+    toValue: 0,
+    duration: 200,
+    useNativeDriver: true,
+   }).start();
+  }
+ }, [selectedMarker, detailCardAnim]);
  const [locationStatus, setLocationStatus] =
   useState<LocationStatus>('checking');
  const [backendLocationReminder, setBackendLocationReminder] =
@@ -150,6 +271,7 @@ export default function AttendanceScreen() {
  const [isRefreshingLocation, setIsRefreshingLocation] = useState(false);
  const [backendAddress, setBackendAddress] = useState<string | null>(null);
  const [currentAddress, setCurrentAddress] = useState<string | null>(null);
+ const [typedAddress, setTypedAddress] = useState('');
  const [isCheckingLocation, setIsCheckingLocation] = useState(false);
  // isMounted is initialised synchronously so there is zero tick race window
  // between mount and the ref being set to true.
@@ -167,6 +289,22 @@ export default function AttendanceScreen() {
    : PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION;
  const [currentCoords, setCurrentCoords] = useState<LatLng | null>(null);
  const activeWorkLocation: WorkLocation = WORK_LOCATION;
+
+ const liveCoords = useSmoothCoordinate(currentCoords);
+
+ // Smoothly move map camera when coordinates change
+ useEffect(() => {
+  if (currentCoords) {
+   const region = {
+    latitude: currentCoords.latitude,
+    longitude: currentCoords.longitude,
+    latitudeDelta: 0.02,
+    longitudeDelta: 0.02,
+   };
+   mapRef.current?.animateToRegion(region, 1000);
+   fullMapRef.current?.animateToRegion(region, 1000);
+  }
+ }, [currentCoords]);
 
  const navigation = useNavigation<NavigationProp<RootStackParamList>>();
  const [systemTime, setSystemTime] = useState(Date.now());
@@ -233,6 +371,23 @@ export default function AttendanceScreen() {
    5,
   )}, ${currentCoords.longitude.toFixed(5)}`;
  }, [currentCoords]);
+ const displayAddress =
+  backendAddress || currentAddress || activeWorkLocation.label;
+ const locationModeLabel = backendAddress
+  ? 'MaxxStations verified location'
+  : currentAddress
+  ? 'Live GPS address'
+  : 'Office reference location';
+ const locationSignalLabel =
+  locationStatus === 'inside'
+   ? 'Inside work radius'
+   : locationStatus === 'outside'
+   ? 'Outside radius'
+   : locationStatus === 'checking'
+   ? 'Signal scanning'
+   : locationStatus === 'denied'
+   ? 'Permission blocked'
+   : 'Needs attention';
  const shouldPromptForTravel =
   shiftHasStarted &&
   !shiftEnded &&
@@ -327,20 +482,20 @@ export default function AttendanceScreen() {
      setBackendLocationReminder(reminder);
     }
 
-    if (result.locationStatus === 'outside' && coords) {
+    if (coords) {
      try {
       const addrString = `${coords.latitude},${coords.longitude}`;
       const geocoded = await geocodeAddressAPI(addrString, authToken ?? '');
       setBackendAddress(geocoded.address);
       setCurrentAddress(geocoded.address);
-     } catch (e) {
+     } catch {
       setBackendAddress(
        `${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`,
       );
+      setCurrentAddress(
+       `${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`,
+      );
      }
-    } else {
-     setBackendAddress(null);
-     setCurrentAddress(null);
     }
 
     if (result.locationStatus) {
@@ -789,7 +944,6 @@ export default function AttendanceScreen() {
   handleMarkPresence,
   handleOpenSettings,
   handleOpenTravelMap,
-  handleStartManualTravel,
   hasMarkedIn,
   hasMarkedOut,
   isOffline,
@@ -831,6 +985,55 @@ export default function AttendanceScreen() {
   shiftHasStarted,
   shiftNearEnd,
  ]);
+
+ useEffect(() => {
+  Animated.spring(locationPanelAnim, {
+   toValue: 1,
+   tension: 46,
+   friction: 8,
+   useNativeDriver: true,
+  }).start();
+ }, [locationPanelAnim]);
+
+ useEffect(() => {
+  Animated.sequence([
+   Animated.timing(addressContentAnim, {
+    toValue: 0.45,
+    duration: 90,
+    useNativeDriver: true,
+   }),
+   Animated.spring(addressContentAnim, {
+    toValue: 1,
+    tension: 80,
+    friction: 7,
+    useNativeDriver: true,
+   }),
+  ]).start();
+ }, [
+  addressContentAnim,
+  displayAddress,
+  lastCheckedLabel,
+  locationStatus,
+  coordinatesLabel,
+ ]);
+
+ useEffect(() => {
+  setTypedAddress('');
+  if (!displayAddress) {
+   return;
+  }
+
+  let index = 0;
+  const interval = setInterval(() => {
+   index += 2;
+   setTypedAddress(displayAddress.slice(0, index));
+   if (index >= displayAddress.length) {
+    clearInterval(interval);
+   }
+  }, 16);
+
+  return () => clearInterval(interval);
+ }, [displayAddress]);
 
  return (
   <SafeAreaView style={styles.safe}>
@@ -934,30 +1137,140 @@ export default function AttendanceScreen() {
      </Text>
      <View style={styles.mapContainer}>
       <MapView
+       ref={mapRef}
        provider={PROVIDER_GOOGLE}
        style={styles.map}
        loadingEnabled
-       showsUserLocation
-       showsMyLocationButton
+       showsUserLocation={false}
+       showsMyLocationButton={false}
        initialRegion={{
         latitude: mapCenter.latitude,
         longitude: mapCenter.longitude,
         latitudeDelta: 0.03,
         longitudeDelta: 0.03,
-       }}
-       region={{
-        latitude: mapCenter.latitude,
-        longitude: mapCenter.longitude,
-        latitudeDelta: 0.03,
-        longitudeDelta: 0.03,
        }}>
-       <Marker coordinate={WORK_LOCATION} title="Office" />
+       {/* Office Location Marker */}
+       <Marker
+        coordinate={WORK_LOCATION}
+        anchor={{x: 0.5, y: 0.72}}
+        onPress={async () => {
+         setSelectedMarker({
+          type: 'office',
+          address: WORK_LOCATION.label || 'Office Location',
+          coords: WORK_LOCATION,
+         });
+         try {
+          const addrString = `${WORK_LOCATION.latitude},${WORK_LOCATION.longitude}`;
+          const geocoded = await geocodeAddressAPI(addrString, authToken ?? '');
+          setSelectedMarker(prev =>
+           prev && prev.type === 'office'
+            ? {...prev, address: geocoded.address}
+            : prev,
+          );
+         } catch (e) {
+          console.log('Office geocoding error', e);
+         }
+        }}>
+        <View style={styles.officeMarkerContainerCompact}>
+         <Animated.View
+          style={[
+           styles.officePulseRing,
+           {
+            transform: [
+             {
+              scale: officePulse.interpolate({
+               inputRange: [0, 1],
+               outputRange: [0.95, 1.25],
+              }),
+             },
+            ],
+            opacity: officePulse.interpolate({
+             inputRange: [0, 1],
+             outputRange: [0.4, 0.85],
+            }),
+           },
+          ]}
+         />
+         <View style={styles.officeAvatarBorder}>
+          <LinearGradient
+           colors={['#3B82F6', '#1D4ED8']}
+           style={styles.officeAvatarBg}>
+           <Feather
+            name="briefcase"
+            size={16}
+            color="#FFFFFF"
+           />
+          </LinearGradient>
+         </View>
+         <View
+          style={[styles.markerMiniPill, styles.markerMiniPillOfficeCompact]}>
+          <Text style={styles.markerMiniText}>OFFICE</Text>
+         </View>
+        </View>
+       </Marker>
+
+       {/* User Location Marker */}
        {currentCoords ? (
         <Marker
-         coordinate={currentCoords}
-         title="Live location"
-         pinColor="#F97316"
-        />
+         coordinate={liveCoords || currentCoords}
+         anchor={{x: 0.5, y: 0.5}}
+         onPress={async () => {
+          const coords = currentCoords;
+          setSelectedMarker({
+           type: 'user',
+           address:
+            currentAddress || backendAddress || 'Loading live address...',
+           coords,
+          });
+          try {
+           const addrString = `${coords.latitude},${coords.longitude}`;
+           const geocoded = await geocodeAddressAPI(
+            addrString,
+            authToken ?? '',
+           );
+           setSelectedMarker(prev =>
+            prev && prev.type === 'user'
+             ? {...prev, address: geocoded.address}
+             : prev,
+           );
+           setCurrentAddress(geocoded.address);
+           setBackendAddress(geocoded.address);
+          } catch (e) {
+           console.log('User geocoding error', e);
+          }
+         }}>
+         <View style={styles.userMarkerContainer}>
+          <Animated.View
+           style={[
+            styles.pulseRing,
+            {
+             transform: [
+              {
+               scale: pulseAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [1, 2.4],
+               }),
+              },
+             ],
+             opacity: pulseAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0.75, 0],
+             }),
+            },
+           ]}
+          />
+          <View style={styles.userAvatarBorder}>
+           <LinearGradient
+            colors={['#F97316', '#EA580C']}
+            style={styles.userAvatarBg}>
+            <MaterialCommunityIcons name="account" size={18} color="#FFFFFF" />
+           </LinearGradient>
+          </View>
+          <View style={styles.markerMiniPill}>
+           <Text style={styles.markerMiniText}>YOU</Text>
+          </View>
+         </View>
+        </Marker>
        ) : null}
       </MapView>
       <TouchableOpacity
@@ -966,65 +1279,381 @@ export default function AttendanceScreen() {
        activeOpacity={0.85}>
        <Feather name="maximize" size={18} color="#FFFFFF" />
       </TouchableOpacity>
+
+      {/* Animated Dark Glass Detail Card */}
+      {selectedMarker && (
+       <Animated.View
+        style={[
+         styles.glassDetailCard,
+         {
+          opacity: detailCardAnim,
+          transform: [
+           {
+            translateY: detailCardAnim.interpolate({
+             inputRange: [0, 1],
+             outputRange: [100, 0],
+            }),
+           },
+          ],
+         },
+        ]}>
+        <View style={styles.detailHeader}>
+         <View style={styles.detailHeaderTitleRow}>
+          <View
+           style={[
+            styles.detailIconBg,
+            {
+             backgroundColor:
+              selectedMarker.type === 'office' ? '#3B82F620' : '#F9731620',
+            },
+           ]}>
+           <Feather
+            name={selectedMarker.type === 'office' ? 'briefcase' : 'navigation'}
+            size={14}
+            color={selectedMarker.type === 'office' ? '#3B82F6' : '#F97316'}
+           />
+          </View>
+          <Text allowFontScaling={false} style={styles.detailTitleText}>
+           {selectedMarker.type === 'office'
+            ? 'Office Location'
+            : 'Live User Location'}
+          </Text>
+         </View>
+         <TouchableOpacity
+          onPress={() => setSelectedMarker(null)}
+          style={styles.detailCloseBtn}>
+          <Feather name="x" size={16} color="rgba(255,255,255,0.6)" />
+         </TouchableOpacity>
+        </View>
+        <Text allowFontScaling={false} style={styles.detailAddressText}>
+         {selectedMarker.address}
+        </Text>
+        <View style={styles.detailMetaRow}>
+         <Feather name="map-pin" size={11} color="rgba(255,255,255,0.5)" />
+         <Text allowFontScaling={false} style={styles.detailCoordsText}>
+          {selectedMarker.coords.latitude.toFixed(5)},{' '}
+          {selectedMarker.coords.longitude.toFixed(5)}
+         </Text>
+        </View>
+       </Animated.View>
+      )}
      </View>
-     <View
+     <Animated.View
       style={[
-       styles.locationPill,
+       styles.liveLocationPanel,
        {
-        backgroundColor: locationVisual.backgroundColor,
-        borderColor: locationVisual.borderColor,
+        opacity: locationPanelAnim,
+        transform: [
+         {
+          translateY: locationPanelAnim.interpolate({
+           inputRange: [0, 1],
+           outputRange: [18, 0],
+          }),
+         },
+         {
+          scale: locationPanelAnim.interpolate({
+           inputRange: [0, 1],
+           outputRange: [0.97, 1],
+          }),
+         },
+        ],
        },
       ]}>
-      <Feather
-       name={locationVisual.icon as any}
-       size={13}
-       color={locationVisual.textColor}
-      />
-      <Text
-       allowFontScaling={false}
-       style={[styles.locationPillText, {color: locationVisual.textColor}]}>
-       {locationVisual.message}
-      </Text>
-     </View>
-     <Text allowFontScaling={false} style={styles.locationDetail}>
-      {locationVisual.detail}
-     </Text>
-     <Text allowFontScaling={false} style={styles.address}>
-      {backendAddress || currentAddress || activeWorkLocation.label}
-     </Text>
-     {/* <Text allowFontScaling={false} style={styles.addressSub}>
-            {backendAddress ? 'Backend Verified Location' : coordinatesLabel}
-          </Text> */}
-     <View style={styles.locationFooter}>
-      <View style={styles.locationMetaRow}>
-       <Feather name="map-pin" size={12} color={theme.colors.muted} />
-       <Text allowFontScaling={false} style={styles.locationMetaText}>
-        System Review • Last Checked {lastCheckedLabel}
-       </Text>
-      </View>
-      <TouchableOpacity
-       style={styles.refreshButton}
-       onPress={refreshLocation}
-       disabled={isRefreshingLocation}>
-       {isRefreshingLocation ? (
-        <ActivityIndicator
-         key="attendance-loading-recent"
-         size="small"
-         color={theme.colors.primary}
-        />
-       ) : (
-        <Feather name="refresh-ccw" size={12} color={theme.colors.primary} />
-       )}
-       <Text
-        allowFontScaling={false}
+      <LinearGradient
+       colors={[
+        'rgba(255, 27, 107, 0.20)',
+        'rgba(106, 13, 173, 0.20)',
+        'rgba(69, 202, 255, 0.16)',
+       ]}
+       start={{x: 0, y: 0}}
+       end={{x: 1, y: 1}}
+       style={styles.liveLocationGradient}>
+       <View style={styles.liveLocationTopRow}>
+        <View style={styles.liveLocationTitleWrap}>
+         <View style={styles.liveIconShell}>
+          <Animated.View
+           style={[
+            styles.liveIconPulse,
+            {
+             opacity: pulseAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0.42, 0],
+             }),
+             transform: [
+              {
+               scale: pulseAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [1, 1.75],
+               }),
+              },
+             ],
+            },
+           ]}
+          />
+          <LinearGradient
+           colors={[theme.colors.primary, theme.colors.secondary]}
+           style={styles.liveIconGradient}>
+           <Animated.View
+            style={[
+             styles.liveScannerRing,
+             {
+              transform: [
+               {
+                rotate: pulseAnim.interpolate({
+                 inputRange: [0, 1],
+                 outputRange: ['0deg', '360deg'],
+                }),
+               },
+              ],
+             },
+            ]}
+           />
+           <MaterialCommunityIcons
+            name="crosshairs-gps"
+            size={18}
+            color="#FFFFFF"
+           />
+          </LinearGradient>
+         </View>
+         <View style={styles.liveTitleTextWrap}>
+          <Text allowFontScaling={false} style={styles.liveEyebrow}>
+           LIVE LOCATION
+          </Text>
+          <Text
+           allowFontScaling={false}
+           numberOfLines={1}
+           ellipsizeMode="tail"
+           style={styles.liveTitle}>
+           {locationVisual.message}
+          </Text>
+         </View>
+        </View>
+        <View
+         style={[
+          styles.liveStatusBadge,
+          {
+           borderColor: locationVisual.borderColor,
+           backgroundColor: locationVisual.backgroundColor,
+          },
+         ]}>
+         <Animated.View
+          style={[
+           styles.liveDot,
+           {
+            backgroundColor: locationVisual.textColor,
+            opacity: pulseAnim.interpolate({
+             inputRange: [0, 0.5, 1],
+             outputRange: [1, 0.45, 1],
+            }),
+           },
+          ]}
+         />
+         <Text
+          allowFontScaling={false}
+          numberOfLines={1}
+          style={[styles.liveStatusText, {color: locationVisual.textColor}]}>
+          {locationStatus === 'checking' ? 'Scanning' : 'Active'}
+         </Text>
+        </View>
+       </View>
+
+       <Animated.View
         style={[
-         styles.refreshText,
-         isRefreshingLocation && {color: theme.colors.primary},
+         styles.trackingConsole,
+         {
+          opacity: addressContentAnim,
+          transform: [
+           {
+            translateY: addressContentAnim.interpolate({
+             inputRange: [0.45, 1],
+             outputRange: [8, 0],
+            }),
+           },
+          ],
+         },
         ]}>
-        {isRefreshingLocation ? 'Checking…' : 'Refresh'}
-       </Text>
-      </TouchableOpacity>
-     </View>
+        <View style={styles.trackingHeader}>
+         <View style={styles.trackingHeaderLeft}>
+          <MaterialCommunityIcons
+           name="map-marker-radius"
+           size={16}
+           color={theme.colors.secondary}
+          />
+          <Text allowFontScaling={false} style={styles.addressLabel}>
+           {locationModeLabel}
+          </Text>
+         </View>
+         <View style={styles.signalChip}>
+          <Animated.View
+           style={[
+            styles.signalWave,
+            {
+             opacity: pulseAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0.25, 0.9],
+             }),
+            },
+           ]}
+          />
+          <Text allowFontScaling={false} style={styles.signalChipText}>
+           GPS
+          </Text>
+         </View>
+        </View>
+
+        <View style={styles.trackingTimeline}>
+         <View style={styles.timelineRail}>
+          <View
+           style={[
+            styles.timelineNode,
+            {
+             borderColor: theme.colors.primary,
+             backgroundColor: theme.colors.sunsetSoft,
+            },
+           ]}>
+           <MaterialCommunityIcons
+            name="navigation-variant"
+            size={14}
+            color={theme.colors.primary}
+           />
+          </View>
+          <View style={styles.timelineLine} />
+          <View style={styles.timelineNodeMuted}>
+           <Feather
+            name="briefcase"
+            size={12}
+            color={theme.colors.secondary}
+           />
+          </View>
+         </View>
+
+         <View style={styles.timelineContent}>
+          <Text
+           allowFontScaling={false}
+           numberOfLines={3}
+           ellipsizeMode="tail"
+           style={styles.address}>
+           {typedAddress || displayAddress}
+           {typedAddress.length < displayAddress.length ? (
+            <Text style={styles.typeCursor}>|</Text>
+           ) : null}
+          </Text>
+
+          <View style={styles.trackingMetaStack}>
+           <View style={styles.trackingMetaPill}>
+            <MaterialCommunityIcons
+             name="satellite-uplink"
+             size={13}
+             color={theme.colors.secondary}
+            />
+            <Text
+             allowFontScaling={false}
+             numberOfLines={1}
+             ellipsizeMode="middle"
+             style={styles.trackingMetaText}>
+             {coordinatesLabel}
+            </Text>
+           </View>
+           <View style={styles.trackingMetaPill}>
+            <MaterialCommunityIcons
+             name="shield-check-outline"
+             size={13}
+             color={locationVisual.textColor}
+            />
+            <Text
+             allowFontScaling={false}
+             numberOfLines={1}
+             ellipsizeMode="tail"
+             style={styles.trackingMetaText}>
+             {locationSignalLabel}
+            </Text>
+           </View>
+          </View>
+
+          <Text
+           allowFontScaling={false}
+           numberOfLines={2}
+           ellipsizeMode="tail"
+           style={styles.locationDetail}>
+           {locationVisual.detail}
+          </Text>
+         </View>
+        </View>
+       </Animated.View>
+
+       <View style={styles.quickStatusRow}>
+        <View style={styles.quickStatusItem}>
+         <MaterialCommunityIcons
+          name="access-point"
+          size={15}
+          color={theme.colors.primary}
+         />
+         <Text allowFontScaling={false} style={styles.quickStatusText}>
+          Live Sync
+         </Text>
+        </View>
+        <View style={styles.quickStatusItem}>
+         <MaterialCommunityIcons
+          name="map-check-outline"
+          size={15}
+          color={theme.colors.secondary}
+         />
+         <Text
+          allowFontScaling={false}
+          numberOfLines={1}
+          style={styles.quickStatusText}>
+          Office Radius
+         </Text>
+        </View>
+        <View style={styles.quickStatusItem}>
+         <MaterialCommunityIcons
+          name="clock-check-outline"
+          size={15}
+          color={theme.colors.warning}
+         />
+         <Text
+          allowFontScaling={false}
+          numberOfLines={1}
+          style={styles.quickStatusText}>
+          Updated
+         </Text>
+        </View>
+       </View>
+
+       <View style={styles.locationFooter}>
+        <View style={styles.locationMetaRow}>
+         <Feather name="clock" size={12} color={theme.colors.muted} />
+         <Text
+          allowFontScaling={false}
+          numberOfLines={1}
+          style={styles.locationMetaText}>
+          Last checked {lastCheckedLabel}
+         </Text>
+        </View>
+        <TouchableOpacity
+         style={[
+          styles.refreshButton,
+          isRefreshingLocation && styles.refreshButtonActive,
+         ]}
+         onPress={refreshLocation}
+         disabled={isRefreshingLocation}
+         activeOpacity={0.82}>
+         {isRefreshingLocation ? (
+          <ActivityIndicator
+           key="attendance-loading-recent"
+           size="small"
+           color="#FFFFFF"
+          />
+         ) : (
+          <Feather name="refresh-ccw" size={13} color="#FFFFFF" />
+         )}
+         <Text allowFontScaling={false} style={styles.refreshText}>
+          {isRefreshingLocation ? 'Checking' : 'Refresh'}
+         </Text>
+        </TouchableOpacity>
+       </View>
+      </LinearGradient>
+     </Animated.View>
     </AnimatedCard>
 
     <AnimatedCard style={styles.activityHub} delay={100}>
@@ -1140,30 +1769,139 @@ export default function AttendanceScreen() {
     <View style={styles.mapModalOverlay}>
      <View style={styles.mapModalContent}>
       <MapView
+       ref={fullMapRef}
        provider={PROVIDER_GOOGLE}
        style={styles.fullScreenMap}
        loadingEnabled
-       showsUserLocation
-       showsMyLocationButton
+       showsUserLocation={false}
+       showsMyLocationButton={false}
        initialRegion={{
         latitude: mapCenter.latitude,
         longitude: mapCenter.longitude,
         latitudeDelta: 0.03,
         longitudeDelta: 0.03,
-       }}
-       region={{
-        latitude: mapCenter.latitude,
-        longitude: mapCenter.longitude,
-        latitudeDelta: 0.03,
-        longitudeDelta: 0.03,
        }}>
-       <Marker coordinate={WORK_LOCATION} title="Office" />
+       {/* Office Location Marker */}
+       <Marker
+        coordinate={WORK_LOCATION}
+        anchor={{x: 0.5, y: 0.5}}
+        onPress={async () => {
+         setSelectedMarker({
+          type: 'office',
+          address: WORK_LOCATION.label || 'Office Location',
+          coords: WORK_LOCATION,
+         });
+         try {
+          const addrString = `${WORK_LOCATION.latitude},${WORK_LOCATION.longitude}`;
+          const geocoded = await geocodeAddressAPI(addrString, authToken ?? '');
+          setSelectedMarker(prev =>
+           prev && prev.type === 'office'
+            ? {...prev, address: geocoded.address}
+            : prev,
+          );
+         } catch (e) {
+          console.log('Office geocoding error', e);
+         }
+        }}>
+        <View style={styles.officeMarkerContainer}>
+         <Animated.View
+          style={[
+           styles.officePulseRing,
+           {
+            transform: [
+             {
+              scale: officePulse.interpolate({
+               inputRange: [0, 1],
+               outputRange: [0.95, 1.25],
+              }),
+             },
+            ],
+            opacity: officePulse.interpolate({
+             inputRange: [0, 1],
+             outputRange: [0.4, 0.85],
+            }),
+           },
+          ]}
+         />
+         <View style={styles.officeAvatarBorder}>
+          <LinearGradient
+           colors={['#3B82F6', '#1D4ED8']}
+           style={styles.officeAvatarBg}>
+           <Feather
+            name="briefcase"
+            size={16}
+            color="#FFFFFF"
+           />
+          </LinearGradient>
+         </View>
+         <View style={[styles.markerMiniPill, {backgroundColor: '#1D4ED8'}]}>
+          <Text style={styles.markerMiniText}>OFFICE</Text>
+         </View>
+        </View>
+       </Marker>
+
+       {/* User Location Marker */}
        {currentCoords ? (
         <Marker
-         coordinate={currentCoords}
-         title="Live location"
-         pinColor="#F97316"
-        />
+         coordinate={liveCoords || currentCoords}
+         anchor={{x: 0.5, y: 0.5}}
+         onPress={async () => {
+          const coords = currentCoords;
+          setSelectedMarker({
+           type: 'user',
+           address:
+            currentAddress || backendAddress || 'Loading live address...',
+           coords,
+          });
+          try {
+           const addrString = `${coords.latitude},${coords.longitude}`;
+           const geocoded = await geocodeAddressAPI(
+            addrString,
+            authToken ?? '',
+           );
+           setSelectedMarker(prev =>
+            prev && prev.type === 'user'
+             ? {...prev, address: geocoded.address}
+             : prev,
+           );
+           setCurrentAddress(geocoded.address);
+           setBackendAddress(geocoded.address);
+          } catch (e) {
+           console.log('User geocoding error', e);
+          }
+         }}>
+         <View style={styles.userMarkerContainer}>
+          <Animated.View
+           style={[
+            styles.pulseRing,
+            {
+             transform: [
+              {
+               scale: pulseAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [1, 2.4],
+               }),
+              },
+             ],
+             opacity: pulseAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0.75, 0],
+             }),
+            },
+           ]}
+          />
+          <View style={styles.userAvatarBorder}>
+           <LinearGradient
+            colors={['#F97316', '#EA580C']}
+            style={styles.userAvatarBg}>
+            <MaterialCommunityIcons name="account" size={18} color="#FFFFFF" />
+           </LinearGradient>
+          </View>
+          <View style={styles.markerMiniPill}>
+           <Text style={styles.markerMiniText}>YOU</Text>
+          </View>
+         </View>
+        </Marker>
        ) : null}
       </MapView>
       <TouchableOpacity
@@ -1172,6 +1910,64 @@ export default function AttendanceScreen() {
        activeOpacity={0.85}>
        <Feather name="x" size={24} color="#FFFFFF" />
       </TouchableOpacity>
+
+      {/* Animated Dark Glass Detail Card */}
+      {selectedMarker && (
+       <Animated.View
+        style={[
+         styles.glassDetailCard,
+         {
+          opacity: detailCardAnim,
+          transform: [
+           {
+            translateY: detailCardAnim.interpolate({
+             inputRange: [0, 1],
+             outputRange: [100, 0],
+            }),
+           },
+          ],
+         },
+        ]}>
+        <View style={styles.detailHeader}>
+         <View style={styles.detailHeaderTitleRow}>
+          <View
+           style={[
+            styles.detailIconBg,
+            {
+             backgroundColor:
+              selectedMarker.type === 'office' ? '#3B82F620' : '#F9731620',
+            },
+           ]}>
+           <Feather
+            name={selectedMarker.type === 'office' ? 'briefcase' : 'navigation'}
+            size={14}
+            color={selectedMarker.type === 'office' ? '#3B82F6' : '#F97316'}
+           />
+          </View>
+          <Text allowFontScaling={false} style={styles.detailTitleText}>
+           {selectedMarker.type === 'office'
+            ? 'Office Location'
+            : 'Live User Location'}
+          </Text>
+         </View>
+         <TouchableOpacity
+          onPress={() => setSelectedMarker(null)}
+          style={styles.detailCloseBtn}>
+          <Feather name="x" size={16} color="rgba(255,255,255,0.6)" />
+         </TouchableOpacity>
+        </View>
+        <Text allowFontScaling={false} style={styles.detailAddressText}>
+         {selectedMarker.address}
+        </Text>
+        <View style={styles.detailMetaRow}>
+         <Feather name="map-pin" size={11} color="rgba(255,255,255,0.5)" />
+         <Text allowFontScaling={false} style={styles.detailCoordsText}>
+          {selectedMarker.coords.latitude.toFixed(5)},{' '}
+          {selectedMarker.coords.longitude.toFixed(5)}
+         </Text>
+        </View>
+       </Animated.View>
+      )}
      </View>
     </View>
    </Modal>
@@ -1332,6 +2128,172 @@ const createStyles = (theme: AppTheme) => {
    borderRadius: 16,
    overflow: 'hidden',
   },
+  userMarkerContainer: {
+   alignItems: 'center',
+   justifyContent: 'center',
+   width: 60,
+   height: 60,
+  },
+  pulseRing: {
+   position: 'absolute',
+   width: 32,
+   height: 32,
+   borderRadius: 16,
+   backgroundColor: 'rgba(249, 115, 22, 0.4)',
+   borderWidth: 1,
+   borderColor: 'rgba(249, 115, 22, 0.65)',
+  },
+  userAvatarBorder: {
+   width: 32,
+   height: 32,
+   borderRadius: 16,
+   backgroundColor: '#FFFFFF',
+   alignItems: 'center',
+   justifyContent: 'center',
+   shadowColor: '#000',
+   shadowOffset: {width: 0, height: 3},
+   shadowOpacity: 0.35,
+   shadowRadius: 5,
+   elevation: 6,
+   borderWidth: 1.5,
+   borderColor: '#EA580C',
+  },
+  userAvatarBg: {
+   width: '100%',
+   height: '100%',
+   borderRadius: 14,
+   alignItems: 'center',
+   justifyContent: 'center',
+  },
+  markerMiniPill: {
+   position: 'absolute',
+   bottom: 0,
+   backgroundColor: '#EA580C',
+   paddingHorizontal: 5,
+   paddingVertical: 1.5,
+   borderRadius: 6,
+   borderWidth: 1,
+   borderColor: '#FFFFFF',
+   shadowColor: '#000',
+   shadowOffset: {width: 0, height: 1},
+   shadowOpacity: 0.2,
+   shadowRadius: 2,
+   elevation: 3,
+  },
+  markerMiniPillOfficeCompact: {
+   backgroundColor: '#1D4ED8',
+   bottom: 2,
+  },
+  markerMiniText: {
+   color: '#FFFFFF',
+   fontSize: 7.5,
+   fontWeight: '900',
+   letterSpacing: 0.3,
+  },
+  officeMarkerContainer: {
+   alignItems: 'center',
+   justifyContent: 'center',
+   width: 60,
+   height: 60,
+  },
+  officeMarkerContainerCompact: {
+   alignItems: 'center',
+   justifyContent: 'center',
+   width: 46,
+   height: 50,
+   paddingBottom: 2,
+  },
+  officePulseRing: {
+   position: 'absolute',
+   width: 36,
+   height: 36,
+   borderRadius: 18,
+   backgroundColor: 'rgba(59, 130, 246, 0.15)',
+   borderWidth: 1.5,
+   borderColor: 'rgba(59, 130, 246, 0.35)',
+  },
+  officeAvatarBorder: {
+   width: 32,
+   height: 32,
+   borderRadius: 16,
+   backgroundColor: '#FFFFFF',
+   alignItems: 'center',
+   justifyContent: 'center',
+   shadowColor: '#000',
+   shadowOffset: {width: 0, height: 3},
+   shadowOpacity: 0.35,
+   shadowRadius: 5,
+   elevation: 6,
+   borderWidth: 1.5,
+   borderColor: '#1D4ED8',
+  },
+  officeAvatarBg: {
+   width: '100%',
+   height: '100%',
+   borderRadius: 14,
+   alignItems: 'center',
+   justifyContent: 'center',
+  },
+  glassDetailCard: {
+   position: 'absolute',
+   bottom: 12,
+   left: 12,
+   right: 12,
+   backgroundColor: 'rgba(15, 23, 42, 0.94)',
+   borderRadius: 18,
+   borderWidth: 1.5,
+   borderColor: 'rgba(255, 255, 255, 0.12)',
+   padding: 14,
+   shadowColor: '#000',
+   shadowOffset: {width: 0, height: 8},
+   shadowOpacity: 0.45,
+   shadowRadius: 18,
+   //  elevation: 20,
+   zIndex: 99,
+  },
+  detailHeader: {
+   flexDirection: 'row',
+   justifyContent: 'space-between',
+   alignItems: 'center',
+   marginBottom: 8,
+  },
+  detailHeaderTitleRow: {
+   flexDirection: 'row',
+   alignItems: 'center',
+   gap: 8,
+  },
+  detailIconBg: {
+   width: 24,
+   height: 24,
+   borderRadius: 8,
+   alignItems: 'center',
+   justifyContent: 'center',
+  },
+  detailTitleText: {
+   fontSize: 14,
+   fontWeight: '800',
+   color: '#FFFFFF',
+  },
+  detailCloseBtn: {
+   padding: 4,
+  },
+  detailAddressText: {
+   fontSize: 12,
+   color: 'rgba(255, 255, 255, 0.8)',
+   lineHeight: 16,
+   marginBottom: 8,
+   fontWeight: '500',
+  },
+  detailMetaRow: {
+   flexDirection: 'row',
+   alignItems: 'center',
+   gap: 6,
+  },
+  detailCoordsText: {
+   fontSize: 11,
+   color: 'rgba(255, 255, 255, 0.5)',
+   fontWeight: '600',
+  },
   map: {
    height: 220,
    borderRadius: 16,
@@ -1382,36 +2344,319 @@ const createStyles = (theme: AppTheme) => {
    justifyContent: 'center',
    zIndex: 10,
   },
-  locationPill: {
-   marginTop: 10,
-   minHeight: 38,
-   borderRadius: 12,
-   paddingHorizontal: 12,
+  liveLocationPanel: {
+   marginTop: 12,
+   borderRadius: 22,
+   overflow: 'hidden',
+   borderWidth: 1,
+   borderColor: 'rgba(255,255,255,0.18)',
+   backgroundColor: 'rgba(59,10,99,0.36)',
+   shadowColor: theme.colors.glow,
+   shadowOffset: {width: 0, height: 14},
+   shadowOpacity: 0.22,
+   shadowRadius: 24,
+   //  elevation: 10,
+  },
+  liveLocationGradient: {
+   padding: 14,
+   gap: 14,
+  },
+  liveLocationTopRow: {
+   flexDirection: 'row',
+   alignItems: 'center',
+   justifyContent: 'space-between',
+   gap: 10,
+  },
+  liveLocationTitleWrap: {
+   flex: 1,
+   minWidth: 0,
+   flexDirection: 'row',
+   alignItems: 'center',
+   gap: 10,
+  },
+  liveIconShell: {
+   width: 44,
+   height: 44,
+   borderRadius: 16,
+   alignItems: 'center',
+   justifyContent: 'center',
+  },
+  liveIconPulse: {
+   position: 'absolute',
+   width: 40,
+   height: 40,
+   borderRadius: 20,
+   backgroundColor: 'rgba(255, 27, 107, 0.24)',
+   borderWidth: 1,
+   borderColor: 'rgba(69, 202, 255, 0.32)',
+  },
+  liveIconGradient: {
+   width: 38,
+   height: 38,
+   borderRadius: 14,
+   alignItems: 'center',
+   justifyContent: 'center',
+   borderWidth: 1,
+   borderColor: 'rgba(255,255,255,0.3)',
+   overflow: 'hidden',
+  },
+  liveScannerRing: {
+   position: 'absolute',
+   width: 32,
+   height: 32,
+   borderRadius: 16,
+   borderWidth: 1.5,
+   borderLeftColor: 'rgba(255,255,255,0.15)',
+   borderRightColor: 'rgba(255,255,255,0.15)',
+   borderBottomColor: 'rgba(255,255,255,0.15)',
+   borderTopColor: '#FFFFFF',
+  },
+  liveTitleTextWrap: {
+   flex: 1,
+   minWidth: 0,
+  },
+  liveEyebrow: {
+   color: theme.colors.secondary,
+   fontSize: 9,
+   fontWeight: '900',
+   letterSpacing: 0.8,
+  },
+  liveTitle: {
+   marginTop: 3,
+   color: theme.colors.text,
+   fontSize: 15,
+   fontWeight: '900',
+  },
+  liveStatusBadge: {
+   maxWidth: 96,
+   minHeight: 30,
+   borderRadius: 999,
+   borderWidth: 1,
+   paddingHorizontal: 9,
    flexDirection: 'row',
    alignItems: 'center',
    justifyContent: 'center',
-   alignSelf: 'stretch',
-   gap: 8,
-   borderWidth: 1,
+   gap: 6,
   },
-  locationPillText: {
-   fontSize: 12,
-   fontWeight: '700',
+  liveDot: {
+   width: 7,
+   height: 7,
+   borderRadius: 4,
+  },
+  liveStatusText: {
+   fontSize: 10,
+   fontWeight: '900',
+   textTransform: 'uppercase',
+  },
+  liveAddressBlock: {
+   borderRadius: 18,
+   borderWidth: 1,
+   borderColor: 'rgba(255,255,255,0.1)',
+   backgroundColor: 'rgba(255,255,255,0.06)',
+   padding: 13,
+  },
+  addressHeaderRow: {
+   flexDirection: 'row',
+   alignItems: 'center',
+   gap: 7,
+   marginBottom: 7,
+  },
+  trackingConsole: {
+   borderRadius: 20,
+   borderWidth: 1,
+   borderColor: 'rgba(255,255,255,0.16)',
+   backgroundColor: 'rgba(255,255,255,0.075)',
+   padding: 13,
+  },
+  trackingHeader: {
+   flexDirection: 'row',
+   alignItems: 'center',
+   justifyContent: 'space-between',
+   gap: 10,
+   marginBottom: 12,
+  },
+  trackingHeaderLeft: {
+   flex: 1,
+   minWidth: 0,
+   flexDirection: 'row',
+   alignItems: 'center',
+   gap: 7,
+  },
+  signalChip: {
+   minHeight: 26,
+   minWidth: 50,
+   paddingHorizontal: 9,
+   borderRadius: 999,
+   overflow: 'hidden',
+   alignItems: 'center',
+   justifyContent: 'center',
+   backgroundColor: 'rgba(255, 27, 107, 0.12)',
+   borderWidth: 1,
+   borderColor: 'rgba(69,202,255,0.32)',
+  },
+  signalWave: {
+   ...StyleSheet.absoluteFillObject,
+   backgroundColor: 'rgba(69,202,255,0.18)',
+  },
+  signalChipText: {
+   color: theme.colors.secondary,
+   fontSize: 10,
+   fontWeight: '900',
+   letterSpacing: 0.4,
+  },
+  trackingTimeline: {
+   flexDirection: 'row',
+   gap: 12,
+  },
+  timelineRail: {
+   width: 28,
+   alignItems: 'center',
+   paddingTop: 1,
+  },
+  timelineNode: {
+   width: 28,
+   height: 28,
+   borderRadius: 14,
+   borderWidth: 1.4,
+   alignItems: 'center',
+   justifyContent: 'center',
+  },
+  timelineLine: {
+   width: 2,
+   minHeight: 42,
+   flex: 1,
+   marginVertical: 5,
+   borderRadius: 999,
+   backgroundColor: 'rgba(216,185,255,0.32)',
+  },
+  timelineNodeMuted: {
+   width: 26,
+   height: 26,
+   borderRadius: 13,
+   alignItems: 'center',
+   justifyContent: 'center',
+   backgroundColor: 'rgba(69,202,255,0.14)',
+   borderWidth: 1,
+   borderColor: 'rgba(69,202,255,0.36)',
+  },
+  timelineContent: {
+   flex: 1,
+   minWidth: 0,
+  },
+  addressLabel: {
+   flex: 1,
+   minWidth: 0,
+   color: 'rgba(255,255,255,0.72)',
+   fontSize: 10,
+   fontWeight: '800',
+   textTransform: 'uppercase',
+   letterSpacing: 0.6,
   },
   locationDetail: {
-   marginTop: 6,
-   color: theme.colors.muted,
-   fontSize: 12,
+   marginTop: 8,
+   color: 'rgba(255,255,255,0.7)',
+   fontSize: 11,
+   lineHeight: 16,
+   fontWeight: '600',
   },
   address: {
-   marginTop: 8,
-   color: theme.colors.muted,
-   fontSize: 12,
+   color: theme.colors.text,
+   fontSize: 15,
+   lineHeight: 21,
+   fontWeight: '900',
+  },
+  typeCursor: {
+   color: theme.colors.secondary,
+   fontWeight: '900',
   },
   addressSub: {
    marginTop: 2,
    color: theme.colors.muted,
    fontSize: 11,
+  },
+  liveInfoGrid: {
+   flexDirection: 'row',
+   gap: 10,
+  },
+  liveInfoItem: {
+   flex: 1,
+   minWidth: 0,
+   borderRadius: 16,
+   borderWidth: 1,
+   borderColor: 'rgba(255,255,255,0.09)',
+   backgroundColor: 'rgba(255,255,255,0.045)',
+   padding: 10,
+   flexDirection: 'row',
+   alignItems: 'center',
+   gap: 8,
+  },
+  liveInfoIcon: {
+   width: 28,
+   height: 28,
+   borderRadius: 10,
+   alignItems: 'center',
+   justifyContent: 'center',
+   backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  liveInfoTextWrap: {
+   flex: 1,
+   minWidth: 0,
+  },
+  liveInfoLabel: {
+   color: 'rgba(255,255,255,0.52)',
+   fontSize: 9,
+   fontWeight: '800',
+   textTransform: 'uppercase',
+  },
+  liveInfoValue: {
+   marginTop: 3,
+   color: theme.colors.text,
+   fontSize: 11,
+   fontWeight: '800',
+  },
+  trackingMetaStack: {
+   marginTop: 10,
+   gap: 8,
+  },
+  trackingMetaPill: {
+   minHeight: 32,
+   borderRadius: 12,
+   paddingHorizontal: 10,
+   flexDirection: 'row',
+   alignItems: 'center',
+   gap: 7,
+   backgroundColor: 'rgba(255,255,255,0.07)',
+   borderWidth: 1,
+   borderColor: 'rgba(255,255,255,0.12)',
+  },
+  trackingMetaText: {
+   flex: 1,
+   minWidth: 0,
+   color: 'rgba(255,255,255,0.82)',
+   fontSize: 11,
+   fontWeight: '800',
+  },
+  quickStatusRow: {
+   flexDirection: 'row',
+   gap: 8,
+  },
+  quickStatusItem: {
+   flex: 1,
+   minWidth: 0,
+   minHeight: 40,
+   borderRadius: 14,
+   alignItems: 'center',
+   justifyContent: 'center',
+   gap: 4,
+   backgroundColor: 'rgba(255,255,255,0.075)',
+   borderWidth: 1,
+   borderColor: 'rgba(255,255,255,0.12)',
+  },
+  quickStatusText: {
+   color: 'rgba(255,255,255,0.78)',
+   fontSize: 9,
+   fontWeight: '900',
+   textTransform: 'uppercase',
   },
   customLocationBanner: {
    marginTop: 8,
@@ -1443,12 +2688,14 @@ const createStyles = (theme: AppTheme) => {
    fontWeight: '700',
   },
   locationFooter: {
-   marginTop: 12,
-   flexDirection: 'column',
-   alignItems: 'flex-start',
-   gap: 12,
+   flexDirection: 'row',
+   alignItems: 'center',
+   justifyContent: 'space-between',
+   gap: 10,
   },
   locationMetaRow: {
+   flex: 1,
+   minWidth: 0,
    flexDirection: 'row',
    alignItems: 'center',
    gap: 6,
@@ -1456,16 +2703,29 @@ const createStyles = (theme: AppTheme) => {
   locationMetaText: {
    color: theme.colors.muted,
    fontSize: 11,
+   fontWeight: '700',
   },
   refreshButton: {
    flexDirection: 'row',
    alignItems: 'center',
+   justifyContent: 'center',
    gap: 6,
+   minHeight: 36,
+   paddingHorizontal: 12,
+   borderRadius: 999,
+   backgroundColor: theme.colors.primary,
+   shadowColor: theme.colors.glow,
+   shadowOffset: {width: 0, height: 8},
+   shadowOpacity: 0.24,
+   shadowRadius: 12,
+  },
+  refreshButtonActive: {
+   opacity: 0.78,
   },
   refreshText: {
-   color: theme.colors.primary,
+   color: '#FFFFFF',
    fontSize: 12,
-   fontWeight: '600',
+   fontWeight: '800',
   },
   outsideHelperText: {
    color: theme.colors.muted,

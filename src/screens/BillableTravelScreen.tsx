@@ -10,8 +10,10 @@ import {
  View,
  AppState,
  Modal,
+ Animated,
 } from 'react-native';
 import Feather from 'react-native-vector-icons/Feather';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
 import MapView, {Marker, Polyline, PROVIDER_GOOGLE} from 'react-native-maps';
@@ -286,6 +288,66 @@ const backgroundTrackingTask = async (taskData?: {
  }
 };
 
+function useSmoothCoordinate(targetCoords: LatLng | null) {
+  const [coords, setCoords] = useState<LatLng | null>(targetCoords);
+  const prevCoordsRef = useRef<LatLng | null>(targetCoords);
+
+  useEffect(() => {
+    if (!targetCoords) {
+      setCoords(null);
+      prevCoordsRef.current = null;
+      return;
+    }
+
+    if (!prevCoordsRef.current) {
+      setCoords(targetCoords);
+      prevCoordsRef.current = targetCoords;
+      return;
+    }
+
+    const startLat = prevCoordsRef.current.latitude;
+    const startLng = prevCoordsRef.current.longitude;
+    const endLat = targetCoords.latitude;
+    const endLng = targetCoords.longitude;
+
+    const diff = Math.abs(endLat - startLat) + Math.abs(endLng - startLng);
+    if (diff < 0.00001 || diff > 0.08) {
+      setCoords(targetCoords);
+      prevCoordsRef.current = targetCoords;
+      return;
+    }
+
+    const startTime = Date.now();
+    const duration = 1200; // Smooth 1.2s glide
+
+    let animId: number;
+    const animate = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      const ease = progress * (2 - progress); // easeOutQuad
+
+      const currentLat = startLat + (endLat - startLat) * ease;
+      const currentLng = startLng + (endLng - startLng) * ease;
+
+      setCoords({ latitude: currentLat, longitude: currentLng });
+
+      if (progress < 1) {
+        animId = requestAnimationFrame(animate);
+      } else {
+        prevCoordsRef.current = targetCoords;
+      }
+    };
+
+    animId = requestAnimationFrame(animate);
+
+    return () => {
+      cancelAnimationFrame(animId);
+    };
+  }, [targetCoords]);
+
+  return coords;
+}
+
 export default function BillableTravelScreen() {
  const {theme} = useAppTheme();
  const styles = useMemo(() => createStyles(theme), [theme]);
@@ -313,6 +375,82 @@ export default function BillableTravelScreen() {
   title: string;
   address: string;
  } | null>(null);
+
+ // Upgrade States
+ const [currentAddress, setCurrentAddress] = useState<string | null>(null);
+ const [startAddress, setStartAddress] = useState<string | null>(null);
+
+ const [selectedMarker, setSelectedMarker] = useState<{
+  type: 'user' | 'start';
+  address: string;
+  coords: LatLng;
+ } | null>(null);
+
+ const detailCardAnim = useRef(new Animated.Value(0)).current;
+ const pulseAnim = useRef(new Animated.Value(0)).current;
+
+ const liveCoords = useSmoothCoordinate(currentCoords);
+
+ useEffect(() => {
+  Animated.loop(
+   Animated.sequence([
+    Animated.timing(pulseAnim, {
+     toValue: 1,
+     duration: 2000,
+     useNativeDriver: true,
+    }),
+   ])
+  ).start();
+ }, [pulseAnim]);
+
+ useEffect(() => {
+  if (selectedMarker) {
+   Animated.spring(detailCardAnim, {
+    toValue: 1,
+    tension: 50,
+    friction: 8,
+    useNativeDriver: true,
+   }).start();
+  } else {
+   Animated.timing(detailCardAnim, {
+    toValue: 0,
+    duration: 200,
+    useNativeDriver: true,
+   }).start();
+  }
+ }, [selectedMarker, detailCardAnim]);
+
+ // Reactive reverse geocoding for current position
+ useEffect(() => {
+  if (currentCoords) {
+   const fetchAddress = async () => {
+    try {
+     const addrString = `${currentCoords.latitude},${currentCoords.longitude}`;
+     const geocoded = await geocodeAddressAPI(addrString, authToken ?? '');
+     setCurrentAddress(geocoded.address);
+    } catch (e) {
+     setCurrentAddress(`${currentCoords.latitude.toFixed(4)}, ${currentCoords.longitude.toFixed(4)}`);
+    }
+   };
+   fetchAddress();
+  }
+ }, [currentCoords, authToken]);
+
+ // Reactive reverse geocoding for starting position
+ useEffect(() => {
+  if (routeCoords[0]) {
+   const fetchStartAddr = async () => {
+    try {
+     const addrString = `${routeCoords[0].latitude},${routeCoords[0].longitude}`;
+     const geocoded = await geocodeAddressAPI(addrString, authToken ?? '');
+     setStartAddress(geocoded.address);
+    } catch (e) {
+     setStartAddress(`${routeCoords[0].latitude.toFixed(4)}, ${routeCoords[0].longitude.toFixed(4)}`);
+    }
+   };
+   fetchStartAddr();
+  }
+ }, [routeCoords, authToken]);
 
  const watchId = useRef<number | null>(null);
  const mapRef = useRef<MapView>(null);
@@ -666,6 +804,78 @@ export default function BillableTravelScreen() {
   }
  }, [dispatch, projects.length]);
 
+ // Fetch initial location and start a foreground watcher if not already tracking
+ useEffect(() => {
+  let watchForegroundId: number | null = null;
+
+  const startForegroundWatch = async () => {
+   try {
+    let hasPermission = false;
+    if (Platform.OS === 'ios') {
+     const status = await check(PERMISSIONS.IOS.LOCATION_ALWAYS);
+     hasPermission = status === RESULTS.GRANTED;
+    } else {
+     const status = await check(PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION);
+     hasPermission = status === RESULTS.GRANTED;
+    }
+
+    if (hasPermission && !isTracking) {
+     // Get current position immediately
+     Geolocation.getCurrentPosition(
+      position => {
+       const coords = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+       };
+       setCurrentCoords(coords);
+       if (mapRef.current) {
+        mapRef.current.animateToRegion({
+         ...coords,
+         latitudeDelta: 0.01,
+         longitudeDelta: 0.01,
+        }, 600);
+       }
+      },
+      err => console.log('[BillableTravel] Foreground init location err:', err),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
+     );
+
+     // Watch position in foreground while screen is active
+     watchForegroundId = Geolocation.watchPosition(
+      position => {
+       const coords = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+       };
+       setCurrentCoords(coords);
+      },
+      err => console.log('[BillableTravel] Foreground watch location err:', err),
+      {
+       enableHighAccuracy: true,
+       distanceFilter: 10,
+       interval: 10000,
+       fastestInterval: 5000,
+      }
+     );
+    }
+   } catch (e) {
+    console.log('[BillableTravel] Foreground permission check failed:', e);
+   }
+  };
+
+  // Delay slightly to let the map component mount successfully
+  const timer = setTimeout(() => {
+   startForegroundWatch();
+  }, 500);
+
+  return () => {
+   clearTimeout(timer);
+   if (watchForegroundId !== null) {
+    Geolocation.clearWatch(watchForegroundId);
+   }
+  };
+ }, [isTracking]);
+
  // Listen for the 'Stop Billable' button click via the notification event bus.
  useEffect(() => {
   const handleStop = () => {
@@ -1009,7 +1219,7 @@ export default function BillableTravelScreen() {
        latitudeDelta: 0.01,
        longitudeDelta: 0.01,
       }}
-      showsUserLocation
+      showsUserLocation={false}
       showsMyLocationButton={false}>
       {routeCoords.length > 1 && (
        <Polyline
@@ -1021,51 +1231,91 @@ export default function BillableTravelScreen() {
        />
       )}
       {routeCoords[0] && (
-       <Marker coordinate={routeCoords[0]} anchor={{x: 0.5, y: 0.5}}>
-        <View style={styles.markerWrapper}>
-         <View style={[styles.customPin, {backgroundColor: '#10B981'}]}>
-          <Feather name="map-pin" size={12} color="#FFF" />
-         </View>
-         <View style={[styles.pinTail, {borderTopColor: '#10B981'}]} />
-         <Text style={[styles.markerLabel, {color: '#10B981'}]}>START</Text>
+       <Marker
+         coordinate={routeCoords[0]}
+         anchor={{x: 0.5, y: 0.5}}
+         onPress={async () => {
+           const coords = routeCoords[0];
+           setSelectedMarker({
+             type: 'start',
+             address: startAddress || 'Starting Position',
+             coords,
+           });
+           try {
+             const addrString = `${coords.latitude},${coords.longitude}`;
+             const geocoded = await geocodeAddressAPI(addrString, authToken ?? '');
+             setSelectedMarker(prev => prev && prev.type === 'start' ? { ...prev, address: geocoded.address } : prev);
+           } catch (e) {
+             console.log('Start geocoding error', e);
+           }
+         }}
+       >
+        <View style={styles.startMarkerContainer}>
+          <View style={[styles.startMarkerBorder, { borderColor: '#10B981' }]}>
+            <LinearGradient
+              colors={['#10B981', '#059669']}
+              style={styles.startMarkerBg}
+            >
+              <MaterialCommunityIcons name="play" size={16} color="#FFFFFF" />
+            </LinearGradient>
+          </View>
+          <View style={[styles.markerMiniPill, { backgroundColor: '#059669' }]}>
+            <Text style={styles.markerMiniText}>START</Text>
+          </View>
         </View>
        </Marker>
       )}
       {currentCoords && (
        <Marker
-        coordinate={currentCoords}
+        coordinate={liveCoords || currentCoords}
         anchor={{x: 0.5, y: 0.5}}
         onPress={async () => {
-         setSelectedPoint({
-          title: 'Current Position',
-          address: 'Locating...',
-         });
-         try {
-          const addrString = `${currentCoords.latitude},${currentCoords.longitude}`;
-          const geocoded = await geocodeAddressAPI(addrString, authToken ?? '');
-          setSelectedPoint({
-           title: 'Current Position',
-           address: geocoded.address,
+          const coords = currentCoords;
+          setSelectedMarker({
+            type: 'user',
+            address: currentAddress || 'Locating current address...',
+            coords,
           });
-         } catch {
-          setSelectedPoint({
-           title: 'Current Position',
-           address: `${currentCoords.latitude.toFixed(
-            6,
-           )}, ${currentCoords.longitude.toFixed(6)}`,
-          });
-         }
-        }}>
-        <View style={styles.markerWrapper}>
-         <View
-          style={[styles.customPin, {backgroundColor: theme.colors.primary}]}>
-          <Feather name="navigation" size={12} color="#FFF" />
-         </View>
-         <View
-          style={[styles.pinTail, {borderTopColor: theme.colors.primary}]}
-         />
-         <Text style={styles.markerLabel}>LIVE</Text>
-         {isTracking && <View style={styles.markerPulse} />}
+          try {
+            const addrString = `${coords.latitude},${coords.longitude}`;
+            const geocoded = await geocodeAddressAPI(addrString, authToken ?? '');
+            setSelectedMarker(prev => prev && prev.type === 'user' ? { ...prev, address: geocoded.address } : prev);
+          } catch (e) {
+            console.log('User geocoding error', e);
+          }
+        }}
+       >
+        <View style={styles.userMarkerContainer}>
+          <Animated.View
+            style={[
+              styles.pulseRing,
+              {
+                transform: [
+                  {
+                    scale: pulseAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [1, 2.4],
+                    }),
+                  },
+                ],
+                opacity: pulseAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0.75, 0],
+                }),
+              },
+            ]}
+          />
+          <View style={styles.userAvatarBorder}>
+            <LinearGradient
+              colors={['#F97316', '#EA580C']}
+              style={styles.userAvatarBg}
+            >
+              <MaterialCommunityIcons name="account" size={18} color="#FFFFFF" />
+            </LinearGradient>
+          </View>
+          <View style={styles.markerMiniPill}>
+            <Text style={styles.markerMiniText}>YOU</Text>
+          </View>
         </View>
        </Marker>
       )}
@@ -1085,33 +1335,54 @@ export default function BillableTravelScreen() {
       </View>
      )}
 
-     {/* Floating Detail Card */}
-     {selectedPoint && (
-      <AnimatedCard style={styles.floatingInfoCard} delay={0}>
-       <View style={styles.calloutHeader}>
-        <View style={styles.calloutTitleGroup}>
-         <Feather name="map-pin" size={14} color={theme.colors.primary} />
-         <Text style={styles.calloutTitle}>{selectedPoint.title}</Text>
+     {/* Upgraded Dark Glass Floating Detail Card */}
+     {selectedMarker && (
+      <Animated.View
+        style={[
+          styles.glassDetailCard,
+          {
+            opacity: detailCardAnim,
+            transform: [
+              {
+                translateY: detailCardAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [100, 0],
+                }),
+              },
+            ],
+          },
+        ]}
+      >
+        <View style={styles.detailHeader}>
+          <View style={styles.detailHeaderTitleRow}>
+            <View style={[styles.detailIconBg, { backgroundColor: selectedMarker.type === 'start' ? '#10B98120' : '#F9731620' }]}>
+              <Feather
+                name={selectedMarker.type === 'start' ? 'play' : 'navigation'}
+                size={14}
+                color={selectedMarker.type === 'start' ? '#10B981' : '#F97316'}
+              />
+            </View>
+            <Text allowFontScaling={false} style={styles.detailTitleText}>
+              {selectedMarker.type === 'start' ? 'Start Location' : 'Live User Location'}
+            </Text>
+          </View>
+          <TouchableOpacity
+            onPress={() => setSelectedMarker(null)}
+            style={styles.detailCloseBtn}
+          >
+            <Feather name="x" size={16} color="rgba(255,255,255,0.6)" />
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity
-         onPress={() => setSelectedPoint(null)}
-         style={styles.closeCalloutBtn}>
-         <Feather name="x" size={16} color={theme.colors.muted} />
-        </TouchableOpacity>
-       </View>
-       <Text style={styles.calloutAddress}>{selectedPoint.address}</Text>
-       <View style={styles.calloutStatus}>
-        <View
-         style={[
-          styles.statusDot,
-          {backgroundColor: isTracking ? '#10B981' : theme.colors.muted},
-         ]}
-        />
-        <Text style={styles.statusLabel}>
-         {isTracking ? 'Active Session' : 'Idle'}
+        <Text allowFontScaling={false} style={styles.detailAddressText}>
+          {selectedMarker.address}
         </Text>
-       </View>
-      </AnimatedCard>
+        <View style={styles.detailMetaRow}>
+          <Feather name="map-pin" size={11} color="rgba(255,255,255,0.5)" />
+          <Text allowFontScaling={false} style={styles.detailCoordsText}>
+            {selectedMarker.coords.latitude.toFixed(5)}, {selectedMarker.coords.longitude.toFixed(5)}
+          </Text>
+        </View>
+      </Animated.View>
      )}
     </View>
 
@@ -1149,8 +1420,8 @@ export default function BillableTravelScreen() {
        ref={fullMapRef}
        provider={PROVIDER_GOOGLE}
        style={styles.fullScreenMap}
-       showsUserLocation
-       showsMyLocationButton
+       showsUserLocation={false}
+       showsMyLocationButton={false}
        initialRegion={{
         latitude: currentCoords?.latitude || 30.7196,
         longitude: currentCoords?.longitude || 76.7649,
@@ -1167,14 +1438,93 @@ export default function BillableTravelScreen() {
         />
        )}
        {routeCoords[0] && (
-        <Marker coordinate={routeCoords[0]} title="Starting Point" />
+        <Marker
+          coordinate={routeCoords[0]}
+          anchor={{x: 0.5, y: 0.5}}
+          onPress={async () => {
+            const coords = routeCoords[0];
+            setSelectedMarker({
+              type: 'start',
+              address: startAddress || 'Starting Position',
+              coords,
+            });
+            try {
+              const addrString = `${coords.latitude},${coords.longitude}`;
+              const geocoded = await geocodeAddressAPI(addrString, authToken ?? '');
+              setSelectedMarker(prev => prev && prev.type === 'start' ? { ...prev, address: geocoded.address } : prev);
+            } catch (e) {
+              console.log('Start geocoding error', e);
+            }
+          }}
+        >
+         <View style={styles.startMarkerContainer}>
+           <View style={[styles.startMarkerBorder, { borderColor: '#10B981' }]}>
+             <LinearGradient
+               colors={['#10B981', '#059669']}
+               style={styles.startMarkerBg}
+             >
+               <MaterialCommunityIcons name="play" size={16} color="#FFFFFF" />
+             </LinearGradient>
+           </View>
+           <View style={[styles.markerMiniPill, { backgroundColor: '#059669' }]}>
+             <Text style={styles.markerMiniText}>START</Text>
+           </View>
+         </View>
+        </Marker>
        )}
        {currentCoords && (
         <Marker
-         coordinate={currentCoords}
-         title="Your Location"
-         description="Real-time travel position"
-        />
+         coordinate={liveCoords || currentCoords}
+         anchor={{x: 0.5, y: 0.5}}
+         onPress={async () => {
+           const coords = currentCoords;
+           setSelectedMarker({
+             type: 'user',
+             address: currentAddress || 'Locating current address...',
+             coords,
+           });
+           try {
+             const addrString = `${coords.latitude},${coords.longitude}`;
+             const geocoded = await geocodeAddressAPI(addrString, authToken ?? '');
+             setSelectedMarker(prev => prev && prev.type === 'user' ? { ...prev, address: geocoded.address } : prev);
+           } catch (e) {
+             console.log('User geocoding error', e);
+           }
+         }}
+        >
+         <View style={styles.userMarkerContainer}>
+           <Animated.View
+             style={[
+               styles.pulseRing,
+               {
+                 transform: [
+                   {
+                     scale: pulseAnim.interpolate({
+                       inputRange: [0, 1],
+                       outputRange: [1, 2.4],
+                     }),
+                   },
+                 ],
+                 opacity: pulseAnim.interpolate({
+                   inputRange: [0, 1],
+                   outputRange: [0.75, 0],
+                 }),
+               },
+             ]}
+           />
+           <View style={styles.userAvatarBorder}>
+             <LinearGradient
+               colors={['#F97316', '#EA580C']}
+               style={styles.userAvatarBg}
+             >
+               <MaterialCommunityIcons name="account" size={18} color="#FFFFFF" />
+             </LinearGradient>
+           </View>
+           <View style={styles.markerMiniPill}>
+             <Text style={styles.markerMiniText}>YOU</Text>
+           </View>
+         </View>
+        </Marker>
        )}
       </MapView>
       <TouchableOpacity
@@ -1182,6 +1532,56 @@ export default function BillableTravelScreen() {
        onPress={() => setIsMapModalVisible(false)}>
        <Feather name="x" size={24} color={theme.colors.text} />
       </TouchableOpacity>
+
+      {/* Upgraded Dark Glass Floating Detail Card */}
+      {selectedMarker && (
+       <Animated.View
+         style={[
+           styles.glassDetailCard,
+           {
+             opacity: detailCardAnim,
+             transform: [
+               {
+                 translateY: detailCardAnim.interpolate({
+                   inputRange: [0, 1],
+                   outputRange: [100, 0],
+                 }),
+               },
+             ],
+           },
+         ]}
+       >
+         <View style={styles.detailHeader}>
+           <View style={styles.detailHeaderTitleRow}>
+             <View style={[styles.detailIconBg, { backgroundColor: selectedMarker.type === 'start' ? '#10B98120' : '#F9731620' }]}>
+               <Feather
+                 name={selectedMarker.type === 'start' ? 'play' : 'navigation'}
+                 size={14}
+                 color={selectedMarker.type === 'start' ? '#10B981' : '#F97316'}
+               />
+             </View>
+             <Text allowFontScaling={false} style={styles.detailTitleText}>
+               {selectedMarker.type === 'start' ? 'Start Location' : 'Live User Location'}
+             </Text>
+           </View>
+           <TouchableOpacity
+             onPress={() => setSelectedMarker(null)}
+             style={styles.detailCloseBtn}
+           >
+             <Feather name="x" size={16} color="rgba(255,255,255,0.6)" />
+           </TouchableOpacity>
+         </View>
+         <Text allowFontScaling={false} style={styles.detailAddressText}>
+           {selectedMarker.address}
+         </Text>
+         <View style={styles.detailMetaRow}>
+           <Feather name="map-pin" size={11} color="rgba(255,255,255,0.5)" />
+           <Text allowFontScaling={false} style={styles.detailCoordsText}>
+             {selectedMarker.coords.latitude.toFixed(5)}, {selectedMarker.coords.longitude.toFixed(5)}
+           </Text>
+         </View>
+       </Animated.View>
+      )}
      </View>
     </View>
    </Modal>
@@ -1419,6 +1819,151 @@ const createStyles = (theme: AppTheme) =>
    backgroundColor: 'rgba(59, 130, 246, 0.25)',
    position: 'absolute',
    zIndex: 1,
+  },
+  userMarkerContainer: {
+   alignItems: 'center',
+   justifyContent: 'center',
+   width: 60,
+   height: 60,
+  },
+  pulseRing: {
+   position: 'absolute',
+   width: 32,
+   height: 32,
+   borderRadius: 16,
+   backgroundColor: 'rgba(249, 115, 22, 0.4)',
+   borderWidth: 1,
+   borderColor: 'rgba(249, 115, 22, 0.65)',
+  },
+  userAvatarBorder: {
+   width: 32,
+   height: 32,
+   borderRadius: 16,
+   backgroundColor: '#FFFFFF',
+   alignItems: 'center',
+   justifyContent: 'center',
+   shadowColor: '#000',
+   shadowOffset: {width: 0, height: 3},
+   shadowOpacity: 0.35,
+   shadowRadius: 5,
+   elevation: 6,
+   borderWidth: 1.5,
+   borderColor: '#EA580C',
+  },
+  userAvatarBg: {
+   width: '100%',
+   height: '100%',
+   borderRadius: 14,
+   alignItems: 'center',
+   justifyContent: 'center',
+  },
+  markerMiniPill: {
+   position: 'absolute',
+   bottom: 0,
+   backgroundColor: '#EA580C',
+   paddingHorizontal: 5,
+   paddingVertical: 1.5,
+   borderRadius: 6,
+   borderWidth: 1,
+   borderColor: '#FFFFFF',
+   shadowColor: '#000',
+   shadowOffset: {width: 0, height: 1},
+   shadowOpacity: 0.2,
+   shadowRadius: 2,
+   elevation: 3,
+  },
+  markerMiniText: {
+   color: '#FFFFFF',
+   fontSize: 7.5,
+   fontWeight: '900',
+   letterSpacing: 0.3,
+  },
+  startMarkerContainer: {
+   alignItems: 'center',
+   justifyContent: 'center',
+   width: 60,
+   height: 60,
+  },
+  startMarkerBorder: {
+   width: 32,
+   height: 32,
+   borderRadius: 16,
+   backgroundColor: '#FFFFFF',
+   alignItems: 'center',
+   justifyContent: 'center',
+   shadowColor: '#000',
+   shadowOffset: {width: 0, height: 3},
+   shadowOpacity: 0.35,
+   shadowRadius: 5,
+   elevation: 6,
+   borderWidth: 1.5,
+  },
+  startMarkerBg: {
+   width: '100%',
+   height: '100%',
+   borderRadius: 14,
+   alignItems: 'center',
+   justifyContent: 'center',
+  },
+  glassDetailCard: {
+   position: 'absolute',
+   bottom: 16,
+   left: 16,
+   right: 16,
+   backgroundColor: 'rgba(15, 23, 42, 0.94)',
+   borderRadius: 18,
+   borderWidth: 1.5,
+   borderColor: 'rgba(255, 255, 255, 0.12)',
+   padding: 14,
+   shadowColor: '#000',
+   shadowOffset: {width: 0, height: 8},
+   shadowOpacity: 0.45,
+   shadowRadius: 18,
+   elevation: 20,
+   zIndex: 99,
+  },
+  detailHeader: {
+   flexDirection: 'row',
+   justifyContent: 'space-between',
+   alignItems: 'center',
+   marginBottom: 8,
+  },
+  detailHeaderTitleRow: {
+   flexDirection: 'row',
+   alignItems: 'center',
+   gap: 8,
+  },
+  detailIconBg: {
+   width: 24,
+   height: 24,
+   borderRadius: 8,
+   alignItems: 'center',
+   justifyContent: 'center',
+  },
+  detailTitleText: {
+   fontSize: 14,
+   fontWeight: '800',
+   color: '#FFFFFF',
+  },
+  detailCloseBtn: {
+   padding: 4,
+  },
+  detailAddressText: {
+   fontSize: 12,
+   color: 'rgba(255, 255, 255, 0.8)',
+   lineHeight: 16,
+   marginBottom: 8,
+   fontWeight: '500',
+  },
+  detailMetaRow: {
+   flexDirection: 'row',
+   alignItems: 'center',
+   gap: 6,
+  },
+  detailCoordsText: {
+   fontSize: 11,
+   color: 'rgba(255, 255, 255, 0.5)',
+   fontWeight: '600',
   },
   floatingInfoCard: {
    position: 'absolute',
