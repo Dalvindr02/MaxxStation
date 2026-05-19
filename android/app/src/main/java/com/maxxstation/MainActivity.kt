@@ -1,5 +1,8 @@
 package com.maxxstation
 
+import android.app.NotificationManager
+import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
@@ -29,6 +32,37 @@ class MainActivity : ReactActivity() {
    */
   override fun onSaveInstanceState(outState: Bundle) {
     super.onSaveInstanceState(Bundle())
+  }
+
+  /**
+   * Safety-net: when the Activity is being truly finished (not just rotated),
+   * proactively stop the billable tracking foreground service and cancel
+   * notifications. This covers edge-cases where onTaskRemoved on
+   * BillableTaskRemovalService fires too late or is skipped by aggressive OEMs.
+   */
+  override fun onDestroy() {
+    if (isFinishing && !isChangingConfigurations) {
+      stopBillableServices()
+    }
+    super.onDestroy()
+  }
+
+  private fun stopBillableServices() {
+    runCatching {
+      stopService(
+        Intent().setClassName(
+          packageName,
+          "com.asterinet.react.bgactions.RNBackgroundActionsTask"
+        )
+      )
+    }
+    runCatching {
+      stopService(Intent(this, BillableTaskRemovalService::class.java))
+    }
+    runCatching {
+      val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+      nm.cancelAll()
+    }
   }
 
   /**

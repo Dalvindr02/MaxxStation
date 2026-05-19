@@ -229,6 +229,15 @@ const backgroundTrackingTask = async (taskData?: {
   BackgroundJob.isRunning() &&
   (!runId || activeBackgroundRunId === runId)
  ) {
+  // Safety guard: if the native app-kill handler wiped the session (via
+  // onTaskRemoved or MainActivity.onDestroy), stop immediately so no further
+  // API calls are made even if BackgroundJob.isRunning() hasn't updated yet.
+  const activeSession = await readBillableTravelSession().catch(() => null);
+  if (!activeSession) {
+   console.log('[BG Task] Session cleared externally — stopping background loop.');
+   break;
+  }
+
   try {
    const position = await new Promise<Geolocation.GeoPosition>(
     (resolve, reject) => {
@@ -1529,8 +1538,9 @@ export default function BillableTravelScreen() {
       </MapView>
       <TouchableOpacity
        style={styles.closeModalBtn}
-       onPress={() => setIsMapModalVisible(false)}>
-       <Feather name="x" size={24} color={theme.colors.text} />
+       onPress={() => setIsMapModalVisible(false)}
+       activeOpacity={0.8}>
+       <Feather name="x" size={24} color="#FFFFFF" />
       </TouchableOpacity>
 
       {/* Upgraded Dark Glass Floating Detail Card */}
@@ -1755,18 +1765,13 @@ const createStyles = (theme: AppTheme) =>
    position: 'absolute',
    top: 20,
    right: 20,
-   width: 48,
-   height: 48,
-   borderRadius: 24,
-   backgroundColor: theme.colors.card,
+   width: 44,
+   height: 44,
+   borderRadius: 22,
+   backgroundColor: 'rgba(0,0,0,0.5)',
    alignItems: 'center',
    justifyContent: 'center',
-   borderWidth: 1,
-   borderColor: theme.colors.border,
-   shadowColor: '#000',
-   shadowOpacity: 0.2,
-   shadowRadius: 8,
-   elevation: 10,
+   zIndex: 999,
   },
   markerWrapper: {
    alignItems: 'center',
